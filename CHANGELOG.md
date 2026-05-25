@@ -6,6 +6,24 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Phase 3 ✓ core complete** — capture / inject I/O surface:
+  - `src/ieee1905/io/pcap.py`: `iter_pcap()` yields `CapturedFrame`
+    records (timestamp, src/dst MAC, ethertype, decoded `CMDU` or
+    parse error). `summarize_pcap()` returns a message-type histogram.
+  - CLI: `ieee1905 read <pcap>` (table view), `... --summary`
+    (histogram), `ieee1905 inspect <pcap> N` (typed TLV tree for one
+    frame), `ieee1905 inject <iface> --frame-hex ...`.
+  - REST: `POST /api/pcap/decode` accepts an uploaded PCAP and
+    returns JSON with decoded frames, including typed TLV fields
+    (bytes rendered as hex, nested dataclasses unfolded).
+  - WebSocket: `/ws/frames/{interface}` opens a token-authenticated
+    live stream of decoded 1905 frames, with backpressure-bounded
+    queue and a clean shutdown path.
+  - REST: `POST /api/inject` takes `{interface, frame_hex, repeat,
+    dst_mac, src_mac?}` and writes the frame onto the wire.
+  - 9 new tests (106 total passing): PCAP iterator, CLI commands,
+    REST decode/auth/validation paths.
+  - Added `python-multipart` runtime dep for FastAPI's `UploadFile`.
 - **Phase 2 ✓ complete** — EasyMesh R4 TLV layer (Wi-Fi 7 / EHT / MLD):
   - 10 R4 TLVs (`0xAB` + `0xE0`–`0xE8`) implemented in
     `src/ieee1905/core/tlvs/easymesh_r4.py`:

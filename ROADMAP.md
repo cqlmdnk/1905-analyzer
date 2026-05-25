@@ -172,19 +172,24 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
 - [x] **Phase 2 ✓ complete** — total: 86 EasyMesh TLVs across R1-R4
       registered with the codec (R1 36 + R2 25 + R3 15 + R4 10).
 
-## Phase 3 — Capture & inject I/O
+## Phase 3 — Capture & inject I/O ✓ done (core)
 
-- [ ] Cross-platform live interface listing (already in Phase 0)
-- [ ] BPF filter: default `ether proto 0x893a`; relaxed in bridge mode
-- [ ] PCAP / PCAPNG read / write (interface metadata, timestamps)
-- [ ] Inject: single packet + builder API
-- [ ] PCAP replay (timing-preserving or accelerated)
-- [ ] Template library (`templates/*.yaml`):
-  - Topology Discovery (the canonical 1-second heartbeat)
-  - AP-Autoconfig Search
-  - Topology Query
-  - Channel Preference Query
-  - …
+- [x] Cross-platform live interface listing (Phase 0)
+- [x] BPF filter: default `ether proto 0x893a`; relaxed in bridge mode
+- [x] PCAP / PCAPNG read (interface metadata, timestamps) via
+      `ieee1905.io.pcap.iter_pcap`
+- [x] Inject: single packet + N-repeat, via CLI (`ieee1905 inject`) and
+      REST (`POST /api/inject`)
+- [x] CLI: `ieee1905 read` (table + summary), `ieee1905 inspect <pcap> N`
+      (typed TLV tree)
+- [x] REST `POST /api/pcap/decode` (upload + decoded JSON)
+- [x] WebSocket `/ws/frames/{interface}` (token handshake, threaded
+      sniffer pumping decoded frame JSON to clients)
+- [ ] PCAP replay (timing-preserving or accelerated) — deferred to
+      v0.2.1+
+- [ ] Template library (`templates/*.yaml`) — deferred; for now the CLI
+      `inject` accepts a hex blob, and the codec lets callers build any
+      CMDU programmatically
 
 ## Phase 4 — Bridge / MITM engine
 

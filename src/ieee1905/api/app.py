@@ -8,11 +8,18 @@ endpoints arrive in later phases.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
+import tempfile
+import threading
+from dataclasses import asdict, is_dataclass
+from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from ieee1905 import __version__
 from ieee1905.api.auth import current_token, require_token
@@ -63,7 +70,226 @@ def create_app() -> FastAPI:
             for i in list_interfaces()
         ]
 
+    _register_capture_endpoints(app)
+    _register_inject_endpoints(app)
+
     return app
+
+
+# --- pcap upload + decode -----------------------------------------------------
+
+
+def _frame_to_dict(frame: Any) -> dict[str, Any]:
+    """Render a CapturedFrame as a JSON-friendly dict."""
+    from ieee1905.core import MessageType
+
+    out: dict[str, Any] = {
+        "timestamp": frame.timestamp,
+        "src_mac": frame.src_mac.hex(":") if frame.src_mac else None,
+        "dst_mac": frame.dst_mac.hex(":") if frame.dst_mac else None,
+        "ethertype": frame.ethertype,
+        "raw_length": len(frame.raw),
+    }
+    if frame.cmdu is not None:
+        hdr = frame.cmdu.header
+        out["cmdu"] = {
+            "message_type": hdr.message_type,
+            "message_type_name": MessageType.describe(hdr.message_type),
+            "message_id": hdr.message_id,
+            "fragment_id": hdr.fragment_id,
+            "last_fragment": hdr.last_fragment,
+            "relay_indicator": hdr.relay_indicator,
+            "tlvs": [_tlv_to_dict(t) for t in frame.cmdu.typed_tlvs()],
+        }
+    else:
+        out["decode_error"] = frame.decode_error
+    return out
+
+
+def _tlv_to_dict(typed_tlv: Any) -> dict[str, Any]:
+    """Render a typed TLV (or RawTLV on registry miss) as JSON-friendly dict."""
+    from ieee1905.core import RawTLV
+    from ieee1905.core.tlv_types import TLVType
+
+    if isinstance(typed_tlv, RawTLV):
+        return {
+            "kind": "raw",
+            "type": typed_tlv.tlv_type,
+            "type_name": TLVType.describe(typed_tlv.tlv_type),
+            "length": typed_tlv.length,
+            "payload_hex": typed_tlv.payload.hex(),
+        }
+    cls = type(typed_tlv)
+    return {
+        "kind": "typed",
+        "class": cls.__name__,
+        "type": getattr(cls, "TLV_TYPE", None),
+        "type_name": getattr(cls, "TLV_NAME", cls.__name__),
+        "fields": _serialize_fields(typed_tlv),
+    }
+
+
+def _serialize_fields(obj: Any) -> Any:
+    """Convert dataclass / dict / list / bytes into JSON-serializable forms."""
+    if isinstance(obj, bytes):
+        return obj.hex()
+    if isinstance(obj, dict):
+        return {k: _serialize_fields(v) for k, v in obj.items()}
+    if isinstance(obj, list | tuple):
+        return [_serialize_fields(x) for x in obj]
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return {k: _serialize_fields(v) for k, v in asdict(obj).items()}
+    return obj
+
+
+def _register_capture_endpoints(app: FastAPI) -> None:
+    """Endpoints for reading PCAPs and streaming live frames."""
+
+    @app.post("/api/pcap/decode", dependencies=[Depends(require_token)])
+    async def pcap_decode(file: UploadFile) -> dict[str, Any]:
+        """Upload a PCAP / PCAPNG and get the decoded 1905 frames back."""
+        from ieee1905.io.pcap import iter_pcap
+
+        if file.filename is None:
+            raise HTTPException(status_code=400, detail="missing filename")
+        suffix = Path(file.filename).suffix or ".pcap"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            frames = [_frame_to_dict(f) for f in iter_pcap(tmp_path, ieee1905_only=True)]
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+        return {"filename": file.filename, "frame_count": len(frames), "frames": frames}
+
+    @app.websocket("/ws/frames/{interface}")
+    async def live_frames(ws: WebSocket, interface: str) -> None:
+        """Stream live 1905 frames from ``interface`` over WebSocket.
+
+        Client must send ``{"token": "..."}`` as the first message; otherwise
+        the connection is closed. Each subsequent server message is a
+        decoded :class:`CapturedFrame` dict.
+        """
+        from ieee1905.core import CMDU
+        from ieee1905.core.cmdu import CMDUParseError
+        from ieee1905.io.backend import ETHERTYPE_IEEE1905, get_default_backend
+        from ieee1905.io.ethernet import EthernetFrame, EthernetParseError
+        from ieee1905.io.pcap import CapturedFrame
+
+        await ws.accept()
+        try:
+            handshake = await asyncio.wait_for(ws.receive_json(), timeout=10.0)
+        except (TimeoutError, Exception):
+            await ws.close(code=4001)
+            return
+        if not isinstance(handshake, dict) or handshake.get("token") != current_token():
+            await ws.close(code=4003)
+            return
+
+        loop = asyncio.get_running_loop()
+        stop = threading.Event()
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=512)
+
+        def on_frame(raw: bytes, ts: float) -> None:
+            try:
+                eth = EthernetFrame.parse(raw)
+            except EthernetParseError:
+                return
+            if eth.ethertype != ETHERTYPE_IEEE1905:
+                return
+            try:
+                cmdu = CMDU.from_bytes(eth.payload)
+                err: str | None = None
+            except CMDUParseError as exc:
+                cmdu = None
+                err = f"cmdu parse: {exc}"
+            cap = CapturedFrame(
+                timestamp=ts,
+                raw=raw,
+                src_mac=eth.src,
+                dst_mac=eth.dst,
+                ethertype=eth.ethertype,
+                cmdu=cmdu,
+                decode_error=err,
+            )
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(queue.put_nowait, _frame_to_dict(cap))
+
+        def sniffer() -> None:
+            backend = get_default_backend()
+            try:
+                with backend.open_live(interface, promiscuous=True) as live:
+                    live.sniff(on_frame, stop_event=stop)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        worker = threading.Thread(target=sniffer, daemon=True)
+        worker.start()
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                await ws.send_json(item)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            stop.set()
+            worker.join(timeout=2.0)
+
+
+# --- inject -------------------------------------------------------------------
+
+
+class InjectRequest(BaseModel):
+    interface: str
+    frame_hex: str = Field(..., description="Hex-encoded CMDU payload (no ethernet header).")
+    repeat: int = Field(1, ge=1, le=100_000)
+    dst_mac: str = "01:80:c2:00:00:13"
+    src_mac: str | None = None
+
+
+def _register_inject_endpoints(app: FastAPI) -> None:
+    @app.post("/api/inject", dependencies=[Depends(require_token)])
+    def inject(req: InjectRequest) -> dict[str, Any]:
+        from ieee1905.core.tlvs._helpers import parse_mac_str
+        from ieee1905.io.backend import ETHERTYPE_IEEE1905, get_default_backend
+        from ieee1905.io.ethernet import EthernetFrame
+        from ieee1905.io.interfaces import list_interfaces
+
+        try:
+            payload = bytes.fromhex(req.frame_hex)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"bad frame_hex: {exc}") from exc
+        try:
+            dst = parse_mac_str(req.dst_mac)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"bad dst_mac: {exc}") from exc
+        src: bytes
+        if req.src_mac is not None:
+            src = parse_mac_str(req.src_mac)
+        else:
+            resolved: bytes | None = None
+            for iface in list_interfaces():
+                if iface.name == req.interface and iface.mac:
+                    resolved = parse_mac_str(iface.mac)
+                    break
+            if resolved is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"could not determine source MAC for {req.interface}",
+                )
+            src = resolved
+
+        frame_bytes = EthernetFrame(
+            dst=dst, src=src, ethertype=ETHERTYPE_IEEE1905, payload=payload
+        ).to_bytes()
+        backend = get_default_backend()
+        with backend.open_live(req.interface, bpf_filter=None, promiscuous=False) as live:
+            for _ in range(req.repeat):
+                live.inject(frame_bytes)
+        return {"injected": req.repeat, "interface": req.interface}
 
 
 def run(host: str = "127.0.0.1", port: int = 8519, reload: bool = False) -> None:
