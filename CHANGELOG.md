@@ -6,6 +6,19 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Phase 2 (R2 slice) complete** — EasyMesh R2 TLV layer:
+  - 25 R2 TLVs (`0xA4`–`0xCC`) implemented in
+    `src/ieee1905/core/tlvs/easymesh_r2.py` (channel scan, Profile-2
+    capability, traffic separation, security capability, tunneled
+    messages, radio/STA extended metrics, status/reason codes,
+    backhaul-STA radio capabilities, AKM suite capabilities).
+  - 11 R2 message types (`0x801B`–`0x8033`) added to `MessageType`.
+  - Optional-field TLVs (BSS Load on scan neighbor, backhaul STA MAC on
+    backhaul radio capabilities) round-trip in both shapes.
+  - Regression fixture: `tests/fixtures/easymesh_r2.pcap` (25 frames,
+    ~1.5 KB).
+  - 8 new tests (86 total passing). R2 coverage gate added.
+  - Profile-2 32-bit TLV length framing intentionally deferred.
 - **Phase 2 (R1 slice) complete** — EasyMesh R1 TLV layer:
   - 36 R1 TLVs (`0x80`–`0xA3`) implemented in
     `src/ieee1905/core/tlvs/easymesh_r1.py` (service, identification,

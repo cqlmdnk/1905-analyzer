@@ -129,10 +129,23 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
       `MessageType`.
 - [x] R1 regression fixture (`tests/fixtures/easymesh_r1.pcap`,
       regenerable via `tests.fixtures.build_easymesh_r1_pcap`).
-- [ ] **R2 TLVs**: Channel Scan capabilities / request / report,
-      Profile-2 AP Capability, Default 802.1Q settings, Traffic
-      Separation Policy, Backhaul STA Radio Capabilities, AKM Suite
-      Capabilities, R2 Error Code, …
+- [x] **R2 TLVs** (25 types, `0xA4`–`0xCC`) — covered in
+      `src/ieee1905/core/tlvs/easymesh_r2.py`:
+      Channel Scan Reporting Policy / Capabilities / Request / Result,
+      Timestamp, 1905 Layer Security Capability, Profile-2 AP
+      Capability, Default 802.1Q Settings, Traffic Separation Policy,
+      Profile-2 Error Code, AP Radio Advanced Capabilities, Association
+      Status Notification, Source Info, Tunneled Message Type, Tunneled,
+      Profile-2 Steering Request, Unsuccessful Association Policy,
+      Metric Collection Interval, Radio Metrics, AP Extended Metrics,
+      Associated STA Extended Link Metrics, Status Code, Reason Code,
+      Backhaul STA Radio Capabilities, AKM Suite Capabilities.
+- [x] R2 regression fixture (`tests/fixtures/easymesh_r2.pcap`,
+      regenerable via `tests.fixtures.build_easymesh_r2_pcap`).
+- [ ] Profile-2 32-bit TLV length framing — deferred (no observed wild
+      device today needs it; standard 2-byte length covers all R2 TLVs
+      below 64 KB and we can add a Profile-2 framer when a real device
+      requires it).
 - [ ] **R3 TLVs**: DPP onboarding (Chirp value, DPP CCE, DPP Bootstrapping
       URI), 1905 Encap DPP, Device Inventory, BSS Configuration Request /
       Response / Report, Agent List, …

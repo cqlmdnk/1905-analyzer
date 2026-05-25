@@ -143,7 +143,7 @@ def test_every_r1_tlv_type_has_a_handler() -> None:
 def test_unknown_tlv_in_em_message_falls_through_to_raw() -> None:
     payloads = _iter_payloads()
     cmdu = CMDU.from_bytes(payloads[0])
-    cmdu.tlvs.insert(0, RawTLV(tlv_type=0xCC, payload=b"unknown-em"))
+    cmdu.tlvs.insert(0, RawTLV(tlv_type=0xFE, payload=b"unknown-em"))
     rebuilt = CMDU.from_bytes(cmdu.to_bytes(append_end_of_message=False))
     typed = list(rebuilt.typed_tlvs())
     assert isinstance(typed[0], RawTLV)

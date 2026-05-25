@@ -64,6 +64,19 @@ class MessageType(IntEnum):
     EM_BACKHAUL_STEERING_REQUEST = 0x8019
     EM_BACKHAUL_STEERING_RESPONSE = 0x801A
 
+    # ---- Wi-Fi EasyMesh R2 message types -----------------------------------
+    EM_CHANNEL_SCAN_REQUEST = 0x801B
+    EM_CHANNEL_SCAN_REPORT = 0x801C
+    EM_CAC_REQUEST = 0x8020
+    EM_CAC_TERMINATION = 0x8021
+    EM_CLIENT_DISASSOCIATION_STATS = 0x8022
+    EM_ERROR_RESPONSE = 0x8023
+    EM_ASSOCIATION_STATUS_NOTIFICATION = 0x8024
+    EM_TUNNELED = 0x8025
+    EM_BACKHAUL_STA_CAPABILITY_QUERY = 0x8026
+    EM_BACKHAUL_STA_CAPABILITY_REPORT = 0x8027
+    EM_FAILED_CONNECTION = 0x8033
+
     @classmethod
     def describe(cls, value: int) -> str:
         """Human-readable label, falling back to a hex code for unknowns."""
