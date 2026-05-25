@@ -125,9 +125,10 @@ def _r2_tlvs() -> list[object]:
             encryption_algorithms=0x01,  # AES-SIV
         ),
         Profile2ApCapability(
+            max_prioritization_rules=10,
             reserved=0,
             capabilities=0x80,
-            max_prioritization_rules=10,
+            max_total_number_of_vids=16,
         ),
         Default8021QSettings(primary_vlan_id=100, default_pcp=0xC0),
         TrafficSeparationPolicy(

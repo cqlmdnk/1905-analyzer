@@ -89,15 +89,21 @@ class TLVType(IntEnum):
     # ---- Wi-Fi EasyMesh R2 (Multi-AP Specification v2.0) -------------------
     # Spec: Multi-AP Specification v2.0 §17.2.x.
 
+    # Values verified against strict R3-compliant controllers framework/tlvf wfa_map/eTlvTypeMap.h.
+    # Earlier revisions of this enum had a few wrong addresses (notably
+    # 0xAE / 0xB0 / 0xD4-0xDF); they have all been corrected below.
+
     EM_CHANNEL_SCAN_REPORTING_POLICY = 0xA4
     EM_CHANNEL_SCAN_CAPABILITIES = 0xA5
     EM_CHANNEL_SCAN_REQUEST = 0xA6
     EM_CHANNEL_SCAN_RESULT = 0xA7
     EM_TIMESTAMP = 0xA8
-    EM_1905_LAYER_SECURITY_CAPABILITY = 0xAA
-    EM_PROFILE_2_AP_CAPABILITY = 0xAE
-    EM_DEFAULT_8021Q_SETTINGS = 0xAF
-    EM_TRAFFIC_SEPARATION_POLICY = 0xB0
+    EM_1905_LAYER_SECURITY_CAPABILITY = 0xA9
+    EM_CAC_CAPABILITIES = 0xB2
+    EM_MULTI_AP_PROFILE = 0xB3
+    EM_PROFILE_2_AP_CAPABILITY = 0xB4
+    EM_DEFAULT_8021Q_SETTINGS = 0xB5
+    EM_TRAFFIC_SEPARATION_POLICY = 0xB6
     EM_PROFILE_2_ERROR_CODE = 0xBC
     EM_AP_RADIO_ADVANCED_CAPABILITIES = 0xBE
     EM_ASSOCIATION_STATUS_NOTIFICATION = 0xBF
@@ -119,6 +125,12 @@ class TLVType(IntEnum):
     # Spec: Multi-AP Specification v3.0 §17.2.x. DPP onboarding, BSS
     # configuration and device inventory are the headline additions.
 
+    EM_BSS_CONFIGURATION_REPORT = 0xB7
+    EM_BSSID = 0xB8
+    EM_SERVICE_PRIORITIZATION_RULE = 0xB9
+    EM_DSCP_MAPPING_TABLE = 0xBA
+    EM_BSS_CONFIGURATION_REQUEST = 0xBB
+    EM_BSS_CONFIGURATION_RESPONSE = 0xBD
     EM_1905_ENCAP_DPP = 0xCD
     EM_1905_ENCAP_EAPOL = 0xCE
     EM_DPP_BOOTSTRAPPING_URI_NOTIFICATION = 0xCF
@@ -126,19 +138,13 @@ class TLVType(IntEnum):
     EM_DPP_MESSAGE = 0xD1
     EM_DPP_CCE_INDICATION = 0xD2
     EM_DPP_CHIRP_VALUE = 0xD3
-    EM_BSS_CONFIGURATION_REPORT = 0xD4
-    EM_BSSID = 0xD5
-    EM_SERVICE_PRIORITIZATION_RULE = 0xD6
-    EM_DSCP_MAPPING_TABLE = 0xD7
-    EM_BSS_CONFIGURATION_REQUEST = 0xD8
-    EM_BSS_CONFIGURATION_RESPONSE = 0xDA
-    EM_DEVICE_INVENTORY = 0xDB
-    EM_AGENT_LIST = 0xDF
+    EM_DEVICE_INVENTORY = 0xD4
+    EM_AGENT_LIST = 0xD5
 
     # ---- Wi-Fi EasyMesh R4 (Multi-AP Specification v4.0) -------------------
     # Spec: Multi-AP Specification v4.0 §17.2.x. Wi-Fi 7 / EHT / MLD additions.
 
-    EM_AP_WIFI6_CAPABILITIES = 0xAB  # carryover slot reserved earlier in numbering
+    EM_AP_WIFI6_CAPABILITIES = 0xAA  # per strict R3-compliant controllers TLV_AP_WIFI_6_CAPABILITIES
     EM_AP_EHT_OPERATIONS = 0xE0
     EM_AP_WIFI7_AGENT_CAPABILITIES = 0xE1
     EM_AGENT_AP_MLD_CONFIGURATION = 0xE2

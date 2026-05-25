@@ -93,10 +93,16 @@ def test_agent_reply_to_topology_query() -> None:
     assert len(captured) == 1
     cmdu = _extract_cmdu_from_send(captured[0])
     assert cmdu.header.message_type == MessageType.TOPOLOGY_RESPONSE.value
-    # Two TLVs the agent sent + the auto-EoM = 3.
-    assert len(cmdu.tlvs) == 3
-    # First two should be AL MAC (0x01) + Device Information (0x03).
-    assert {cmdu.tlvs[0].tlv_type, cmdu.tlvs[1].tlv_type} == {0x01, 0x03}
+    # Multi-AP v1.0 §7.2.3 + v2.0 §17.2: Device Information + SupportedService
+    # + AP Operational BSS + Multi-AP Profile (no standalone AL MAC TLV; the
+    # AL MAC inside Device Information is the authoritative copy). Plus EoM = 5.
+    assert len(cmdu.tlvs) == 5
+    types = {t.tlv_type for t in cmdu.tlvs}
+    assert {0x03, 0x80, 0x83, 0xB3}.issubset(types)
+    # AL MAC TLV (0x01) is intentionally absent — controllers reject it.
+    assert 0x01 not in types
+    # EoM is last per spec.
+    assert cmdu.tlvs[-1].tlv_type == 0x00
 
 
 def test_agent_reply_to_ap_capability_query() -> None:

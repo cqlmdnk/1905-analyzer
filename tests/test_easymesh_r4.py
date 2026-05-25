@@ -67,9 +67,9 @@ def test_r4_fixture_typed_decode_matches_original() -> None:
 
 
 def test_every_r4_tlv_type_has_a_handler() -> None:
-    """Coverage gate: every R4 TLVType (0xE0-0xE8 + Wi-Fi 6 carry-over 0xAB) is registered."""
+    """Coverage gate: every R4 TLVType (0xE0-0xE8 + AP Wi-Fi 6 at 0xAA) is registered."""
     registry = get_registry()
-    r4_types = set(range(0xE0, 0xE9)) | {0xAB}
+    r4_types = set(range(0xE0, 0xE9)) | {0xAA}
     missing = [
         t.name
         for t in TLVType

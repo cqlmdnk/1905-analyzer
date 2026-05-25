@@ -38,6 +38,7 @@ dependencies = [
     "rich>=13.7",
     "click>=8.1",
     "platformdirs>=4.2",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]

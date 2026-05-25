@@ -378,7 +378,7 @@ class BssConfigReportRadio:
 
 @dataclass(slots=True)
 class BssConfigurationReport:
-    TLV_TYPE: ClassVar[int] = 0xD4
+    TLV_TYPE: ClassVar[int] = 0xB7
     TLV_NAME: ClassVar[str] = "BSS configuration report"
 
     radios: list[BssConfigReportRadio] = field(default_factory=list)
@@ -413,7 +413,7 @@ register_typed(BssConfigurationReport, spec_ref="Multi-AP v3.0 §17.2.74")
 
 @dataclass(slots=True)
 class BssidTlv:
-    TLV_TYPE: ClassVar[int] = 0xD5
+    TLV_TYPE: ClassVar[int] = 0xB8
     TLV_NAME: ClassVar[str] = "BSSID"
 
     bssid: bytes
@@ -435,7 +435,7 @@ register_typed(BssidTlv, spec_ref="Multi-AP v3.0 §17.2.75")
 
 @dataclass(slots=True)
 class BssConfigurationRequest:
-    TLV_TYPE: ClassVar[int] = 0xD8
+    TLV_TYPE: ClassVar[int] = 0xBB
     TLV_NAME: ClassVar[str] = "BSS configuration request"
 
     #: Opaque DPP / Multi-AP configuration request object. The DPP layer
@@ -455,7 +455,7 @@ register_typed(BssConfigurationRequest, spec_ref="Multi-AP v3.0 §17.2.78")
 
 @dataclass(slots=True)
 class BssConfigurationResponse:
-    TLV_TYPE: ClassVar[int] = 0xDA
+    TLV_TYPE: ClassVar[int] = 0xBD
     TLV_NAME: ClassVar[str] = "BSS configuration response"
 
     #: Opaque DPP / Multi-AP configuration response object.
@@ -480,7 +480,7 @@ register_typed(BssConfigurationResponse, spec_ref="Multi-AP v3.0 §17.2.79")
 
 @dataclass(slots=True)
 class ServicePrioritizationRule:
-    TLV_TYPE: ClassVar[int] = 0xD6
+    TLV_TYPE: ClassVar[int] = 0xB9
     TLV_NAME: ClassVar[str] = "Service prioritization rule"
 
     rule_id: int  # u32 BE
@@ -519,7 +519,7 @@ register_typed(ServicePrioritizationRule, spec_ref="Multi-AP v3.0 §17.2.76")
 
 @dataclass(slots=True)
 class DscpMappingTable:
-    TLV_TYPE: ClassVar[int] = 0xD7
+    TLV_TYPE: ClassVar[int] = 0xBA
     TLV_NAME: ClassVar[str] = "DSCP mapping table"
 
     #: 64-byte table indexed by DSCP value (0..63) → 802.1Q PCP value.
@@ -592,7 +592,7 @@ class InventoryRadio:
 
 @dataclass(slots=True)
 class DeviceInventory:
-    TLV_TYPE: ClassVar[int] = 0xDB
+    TLV_TYPE: ClassVar[int] = 0xD4
     TLV_NAME: ClassVar[str] = "Device inventory"
 
     serial_number: bytes  # length-prefixed (u8) ASCII
@@ -698,7 +698,7 @@ class AgentListEntry:
 
 @dataclass(slots=True)
 class AgentList:
-    TLV_TYPE: ClassVar[int] = 0xDF
+    TLV_TYPE: ClassVar[int] = 0xD5
     TLV_NAME: ClassVar[str] = "Agent list"
 
     agents: list[AgentListEntry] = field(default_factory=list)

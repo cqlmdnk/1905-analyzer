@@ -69,12 +69,19 @@ def test_r3_fixture_typed_decode_matches_original() -> None:
 
 
 def test_every_r3_tlv_type_has_a_handler() -> None:
-    """Coverage gate: every TLVType in the 0xCD-0xDF range has a registered handler."""
+    """Coverage gate: every R3-era TLVType has a registered handler.
+
+    R3 spans 0xB7..0xBD (BSS Configuration family) plus 0xCD..0xD5
+    (DPP / device inventory / agent list), after the strict aligned
+    address correction.
+    """
     registry = get_registry()
-    r3_range = range(0xCD, 0xE0)
+    r3_low = {t.value for t in TLVType if t.name.startswith("EM_") and 0xB7 <= t.value <= 0xBD}
+    r3_high = {t.value for t in TLVType if t.name.startswith("EM_") and 0xCD <= t.value <= 0xD5}
+    r3_values = r3_low | r3_high
     missing = [
         t.name
         for t in TLVType
-        if t.value in r3_range and registry.lookup(t.value) is None
+        if t.value in r3_values and registry.lookup(t.value) is None
     ]
     assert not missing, f"R3 TLV types missing a handler: {missing}"

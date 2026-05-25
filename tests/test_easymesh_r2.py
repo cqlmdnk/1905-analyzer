@@ -74,13 +74,19 @@ def test_r2_fixture_typed_decode_matches_original() -> None:
 
 
 def test_every_r2_tlv_type_has_a_handler() -> None:
-    """Coverage gate: every R2 TLVType (0xA4-0xCC range) has a registered handler."""
+    """Coverage gate: every R2-era TLVType has a registered handler.
+
+    R2 values live in 0xA4..0xCC after we corrected the strict aligned
+    addresses (the BSS Configuration family in 0xB7..0xBD belongs to R3).
+    """
     registry = get_registry()
-    r2_range = range(0xA4, 0xCD)
+    # Concrete R2 values; range() would also catch enum holes (e.g. CAC
+    # series at 0xAD-0xB2 which we don't implement yet).
+    r2_values = {t.value for t in TLVType if t.name.startswith("EM_") and 0xA4 <= t.value <= 0xCC}
     missing = [
         t.name
         for t in TLVType
-        if t.value in r2_range and registry.lookup(t.value) is None
+        if t.value in r2_values and registry.lookup(t.value) is None
     ]
     assert not missing, f"R2 TLV types missing a handler: {missing}"
 

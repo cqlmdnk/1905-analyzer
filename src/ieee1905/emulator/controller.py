@@ -26,6 +26,7 @@ from ieee1905.core import CMDU, MessageType
 from ieee1905.core.tlvs import (
     AlMacAddress,
     AutoconfigFreqBand,
+    MacAddress,
     SupportedFreqBand,
     SupportedRole,
     SupportedService,
@@ -77,6 +78,8 @@ class FakeController:
         for t in (self._sniff_thread, self._heartbeat_thread):
             if t is not None:
                 t.join(timeout=2.0)
+        if self._ctx is not None:
+            self._ctx.close_tx_session()
         logger.info("FakeController stopped")
 
     def _heartbeat_loop(self) -> None:
@@ -91,11 +94,16 @@ class FakeController:
 
     def _send_topology_discovery(self) -> None:
         assert self._ctx is not None
+        # IEEE 1905.1 §6.3.1: Topology Discovery requires AL MAC + the MAC
+        # of the interface the frame is leaving. SupportedService is a
+        # Multi-AP R1+ extension carried on the same message so the peer
+        # learns we're a controller in one round-trip.
         cmdu_bytes = build_cmdu(
             message_type=MessageType.TOPOLOGY_DISCOVERY.value,
             message_id=self._ctx.next_mid(),
             typed_tlvs=[
                 AlMacAddress(al_mac=self.al_mac),
+                MacAddress(mac=self.radio_id),
                 SupportedService(services=[0x00]),  # Multi-AP Controller
             ],
         )

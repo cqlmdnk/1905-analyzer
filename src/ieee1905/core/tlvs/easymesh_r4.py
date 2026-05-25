@@ -74,7 +74,7 @@ class HeRoleCapabilities:
 
 @dataclass(slots=True)
 class ApWifi6Capabilities:
-    TLV_TYPE: ClassVar[int] = 0xAB
+    TLV_TYPE: ClassVar[int] = 0xAA
     TLV_NAME: ClassVar[str] = "AP Wi-Fi 6 capabilities"
 
     radio_id: bytes

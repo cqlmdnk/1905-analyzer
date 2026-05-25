@@ -481,7 +481,7 @@ register_typed(Timestamp, spec_ref="Multi-AP v2.0 §17.2.42")
 
 @dataclass(slots=True)
 class LayerSecurityCapability:
-    TLV_TYPE: ClassVar[int] = 0xAA
+    TLV_TYPE: ClassVar[int] = 0xA9
     TLV_NAME: ClassVar[str] = "1905 layer security capability"
 
     onboarding_protocols: int  # bit 0 = DPP
@@ -521,26 +521,171 @@ register_typed(LayerSecurityCapability, spec_ref="Multi-AP v2.0 §17.2.44")
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# 0xB2 CAC Capabilities — Multi-AP v2.0 §17.2.46
+# Profile-2 CAC (Channel Availability Check) capabilities: per-radio list of
+# supported CAC methods, each with a duration and applicable op-class /
+# channel tuples.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class CacOperatingClass:
+    op_class: int
+    channels: list[int] = field(default_factory=list)
+
+    def to_bytes(self) -> bytes:
+        return (
+            bytes([self.op_class & 0xFF, len(self.channels) & 0xFF])
+            + bytes(c & 0xFF for c in self.channels)
+        )
+
+    @classmethod
+    def parse(cls, payload: bytes, offset: int) -> tuple[CacOperatingClass, int]:
+        if offset + 2 > len(payload):
+            raise ValueError("truncated CAC operating-class header")
+        op_class = payload[offset]
+        count = payload[offset + 1]
+        end = offset + 2 + count
+        if end > len(payload):
+            raise ValueError("truncated CAC operating-class channel list")
+        return cls(op_class=op_class, channels=list(payload[offset + 2 : end])), end - offset
+
+
+@dataclass(slots=True)
+class CacType:
+    #: 0=Continuous, 1=Continuous with dedicated radio, 2=MIMO dim reduced, 3=Time-sliced.
+    method: int
+    duration_seconds: int  # u24 BE
+    operating_classes: list[CacOperatingClass] = field(default_factory=list)
+
+    def to_bytes(self) -> bytes:
+        dur = self.duration_seconds & 0xFFFFFF
+        return (
+            bytes([self.method & 0xFF])
+            + bytes([(dur >> 16) & 0xFF, (dur >> 8) & 0xFF, dur & 0xFF])
+            + bytes([len(self.operating_classes) & 0xFF])
+            + b"".join(oc.to_bytes() for oc in self.operating_classes)
+        )
+
+    @classmethod
+    def parse(cls, payload: bytes, offset: int) -> tuple[CacType, int]:
+        start = offset
+        if offset + 5 > len(payload):
+            raise ValueError("truncated CAC type header")
+        method = payload[offset]
+        dur = (payload[offset + 1] << 16) | (payload[offset + 2] << 8) | payload[offset + 3]
+        count = payload[offset + 4]
+        offset += 5
+        ocs: list[CacOperatingClass] = []
+        for _ in range(count):
+            oc, consumed = CacOperatingClass.parse(payload, offset)
+            ocs.append(oc)
+            offset += consumed
+        return cls(method=method, duration_seconds=dur, operating_classes=ocs), offset - start
+
+
+@dataclass(slots=True)
+class CacRadioCapability:
+    radio_id: bytes
+    cac_types: list[CacType] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if len(self.radio_id) != MAC_LEN:
+            raise ValueError("radio_id must be 6 bytes")
+
+    def to_bytes(self) -> bytes:
+        return (
+            bytes(self.radio_id)
+            + bytes([len(self.cac_types) & 0xFF])
+            + b"".join(t.to_bytes() for t in self.cac_types)
+        )
+
+    @classmethod
+    def parse(cls, payload: bytes, offset: int) -> tuple[CacRadioCapability, int]:
+        start = offset
+        if offset + MAC_LEN + 1 > len(payload):
+            raise ValueError("truncated CAC radio header")
+        radio_id = parse_mac(payload, offset)
+        offset += MAC_LEN
+        count = payload[offset]
+        offset += 1
+        types: list[CacType] = []
+        for _ in range(count):
+            t, consumed = CacType.parse(payload, offset)
+            types.append(t)
+            offset += consumed
+        return cls(radio_id=radio_id, cac_types=types), offset - start
+
+
+@dataclass(slots=True)
+class CacCapabilities:
+    TLV_TYPE: ClassVar[int] = 0xB2
+    TLV_NAME: ClassVar[str] = "CAC capabilities"
+
+    #: ISO 3166 country code, 2 ASCII bytes (e.g. b"US", b"TR").
+    country_code: bytes
+    radios: list[CacRadioCapability] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if len(self.country_code) != 2:
+            raise ValueError("country_code must be 2 ASCII bytes")
+        if len(self.radios) > 0xFF:
+            raise ValueError("too many radios (8-bit count)")
+
+    def to_payload(self) -> bytes:
+        return (
+            bytes(self.country_code)
+            + bytes([len(self.radios) & 0xFF])
+            + b"".join(r.to_bytes() for r in self.radios)
+        )
+
+    @classmethod
+    def from_payload(cls, payload: bytes) -> CacCapabilities:
+        if len(payload) < 3:
+            raise ValueError("CAC capabilities TLV too short")
+        country = bytes(payload[0:2])
+        count = payload[2]
+        offset = 3
+        radios: list[CacRadioCapability] = []
+        for _ in range(count):
+            r, consumed = CacRadioCapability.parse(payload, offset)
+            radios.append(r)
+            offset += consumed
+        if offset != len(payload):
+            raise ValueError(
+                f"CAC capabilities TLV has {len(payload) - offset} trailing bytes"
+            )
+        return cls(country_code=country, radios=radios)
+
+
+register_typed(CacCapabilities, spec_ref="Multi-AP v2.0 §17.2.46")
+
+
 @dataclass(slots=True)
 class Profile2ApCapability:
-    TLV_TYPE: ClassVar[int] = 0xAE
+    TLV_TYPE: ClassVar[int] = 0xB4
     TLV_NAME: ClassVar[str] = "Profile-2 AP capability"
 
+    #: Maximum service prioritization rules the agent supports.
+    max_prioritization_rules: int
     reserved: int
-    #: bit 7: BSS configuration parameter advertisement.
-    #: bit 6: byte-count units (0=bytes, 1=KiB).
-    #: bit 5: TLV-byte-count units (0=bytes, 1=KiB).
+    #: bit 7: BSS configuration parameter advertisement support.
+    #: bit 6: byte counter units (0=bytes, 1=KiB).
+    #: bit 5: TLV byte counter units (0=bytes, 1=KiB).
     capabilities: int
-    max_prioritization_rules: int  # u8
+    #: Maximum total number of VIDs (VLAN IDs) the agent supports.
+    max_total_number_of_vids: int
 
-    SIZE: ClassVar[int] = 3
+    SIZE: ClassVar[int] = 4
 
     def to_payload(self) -> bytes:
         return bytes(
             [
+                self.max_prioritization_rules & 0xFF,
                 self.reserved & 0xFF,
                 self.capabilities & 0xFF,
-                self.max_prioritization_rules & 0xFF,
+                self.max_total_number_of_vids & 0xFF,
             ]
         )
 
@@ -551,9 +696,10 @@ class Profile2ApCapability:
                 f"Profile-2 AP capability TLV must be {cls.SIZE} bytes, got {len(payload)}"
             )
         return cls(
-            reserved=payload[0],
-            capabilities=payload[1],
-            max_prioritization_rules=payload[2],
+            max_prioritization_rules=payload[0],
+            reserved=payload[1],
+            capabilities=payload[2],
+            max_total_number_of_vids=payload[3],
         )
 
 
@@ -567,7 +713,7 @@ register_typed(Profile2ApCapability, spec_ref="Multi-AP v2.0 §17.2.47")
 
 @dataclass(slots=True)
 class Default8021QSettings:
-    TLV_TYPE: ClassVar[int] = 0xAF
+    TLV_TYPE: ClassVar[int] = 0xB5
     TLV_NAME: ClassVar[str] = "Default 802.1Q settings"
 
     primary_vlan_id: int  # u16 BE
@@ -626,7 +772,7 @@ class SsidVlanMapping:
 
 @dataclass(slots=True)
 class TrafficSeparationPolicy:
-    TLV_TYPE: ClassVar[int] = 0xB0
+    TLV_TYPE: ClassVar[int] = 0xB6
     TLV_NAME: ClassVar[str] = "Traffic separation policy"
 
     mappings: list[SsidVlanMapping] = field(default_factory=list)
@@ -657,6 +803,39 @@ class TrafficSeparationPolicy:
 
 
 register_typed(TrafficSeparationPolicy, spec_ref="Multi-AP v2.0 §17.2.49")
+
+
+# ---------------------------------------------------------------------------
+# 0xB3 Multi-AP Profile — Multi-AP v2.0 §17.2.47 (sometimes catalogued as
+# "Profile" or "Multi-AP Profile" TLV depending on the printing). One-byte
+# payload carrying the device's profile level: 0x01=Profile-1, 0x02=
+# Profile-2, 0x03=Profile-3. Real-world Multi-AP controllers expect this
+# inside AP-Autoconfig Search frames issued by Profile-2+ agents and may
+# refuse to reply if it's missing.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class MultiApProfile:
+    TLV_TYPE: ClassVar[int] = 0xB3
+    TLV_NAME: ClassVar[str] = "Multi-AP profile"
+
+    #: 0x01 = Profile-1, 0x02 = Profile-2, 0x03 = Profile-3.
+    profile: int
+
+    def to_payload(self) -> bytes:
+        return bytes([self.profile & 0xFF])
+
+    @classmethod
+    def from_payload(cls, payload: bytes) -> MultiApProfile:
+        if len(payload) != 1:
+            raise ValueError(
+                f"Multi-AP profile TLV must be 1 byte, got {len(payload)}"
+            )
+        return cls(profile=payload[0])
+
+
+register_typed(MultiApProfile, spec_ref="Multi-AP v2.0 §17.2.47")
 
 
 # ---------------------------------------------------------------------------
