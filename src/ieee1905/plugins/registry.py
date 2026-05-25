@@ -40,7 +40,11 @@ class TLVDescriptor:
 
     tlv_type: int
     name: str
-    handler: TLVPlugin
+    # The handler may be either an instance of a class with decode/encode
+    # methods (TLVPlugin protocol) or a class object with from_payload /
+    # to_payload (the typed-TLV style used by built-ins). Both are dispatched
+    # structurally by ieee1905.core.tlv.decode_raw.
+    handler: Any
     spec_ref: str | None = None  # e.g. "IEEE 1905.1 §17.2.4"
     source: str = "builtin"  # "builtin" | "yaml" | "python"
 
