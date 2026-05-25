@@ -292,9 +292,15 @@ def emulator_agent_cmd(
     try:
         import signal
 
-        signal.pause()
-    except (KeyboardInterrupt, AttributeError):
-        # signal.pause() is missing on Windows; fall through to stop.
+        if hasattr(signal, "pause"):
+            signal.pause()  # type: ignore[attr-defined,unused-ignore]
+        else:
+            # Windows: poll for Ctrl-C.
+            import time
+
+            while True:
+                time.sleep(3600)
+    except KeyboardInterrupt:
         pass
     finally:
         agent.stop()
