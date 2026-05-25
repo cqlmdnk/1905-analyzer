@@ -40,6 +40,7 @@ from ieee1905.core.tlvs import (
     ChannelScanCapabilityOpClass,
     ChannelScanCapabilityRadio,
     ChannelSelectionResponse,
+    ClientCapabilityReport,
     DeviceInformation,
     LinkMetricResultCode,
     LocalInterface,
@@ -90,6 +91,19 @@ _FREQ_BAND_TO_RF_BAND = {
     0x01: RF_BAND_5G,
     0x02: RF_BAND_60G,
 }
+
+# CMDU types where the spec-mandated reply is just a 1905 ACK with no TLVs.
+# Most are "no-op for a fronthaul-only emulator with no clients" cases.
+_ACK_ONLY_REQUESTS: frozenset[int] = frozenset({
+    MessageType.EM_HIGHER_LAYER_DATA.value,
+    MessageType.EM_MULTI_AP_POLICY_CONFIG_REQUEST.value,
+    MessageType.EM_CLIENT_STEERING_REQUEST.value,
+    MessageType.EM_CLIENT_ASSOCIATION_CONTROL_REQUEST.value,
+    MessageType.EM_CHANNEL_SCAN_REQUEST.value,
+    MessageType.EM_CAC_REQUEST.value,
+    MessageType.EM_CAC_TERMINATION.value,
+    MessageType.EM_BACKHAUL_STEERING_REQUEST.value,
+})
 
 
 @dataclass(slots=True)
@@ -208,6 +222,7 @@ class FakeAgent:
 
     def _on_cmdu(self, src: bytes, cmdu: CMDU) -> None:
         mtype = cmdu.header.message_type
+        mid = cmdu.header.message_id
         if mtype == MessageType.TOPOLOGY_QUERY.value:
             self._reply_topology_response(src, cmdu)
         elif mtype == MessageType.LINK_METRIC_QUERY.value:
@@ -228,19 +243,19 @@ class FakeAgent:
             self._reply_ap_capability_report(src, cmdu)
         elif mtype == MessageType.EM_AP_METRICS_QUERY.value:
             self._reply_ap_metrics_response(src, cmdu)
-        elif mtype == MessageType.EM_MULTI_AP_POLICY_CONFIG_REQUEST.value:
-            # Spec requires a 1905 ACK acknowledging policy intake.
-            self._send_ack(src, cmdu.header.message_id)
         elif mtype == MessageType.EM_CHANNEL_PREFERENCE_QUERY.value:
             self._reply_channel_preference_report(src, cmdu)
         elif mtype == MessageType.EM_CHANNEL_SELECTION_REQUEST.value:
             self._reply_channel_selection(src, cmdu)
-        elif mtype == MessageType.EM_HIGHER_LAYER_DATA.value:
-            # We don't terminate higher-layer protocols (DPP, key
-            # rotation, etc.) — just ACK so the controller stops retrying.
-            self._send_ack(src, cmdu.header.message_id)
         elif mtype == MessageType.EM_BACKHAUL_STA_CAPABILITY_QUERY.value:
             self._reply_backhaul_sta_capability_report(src, cmdu)
+        elif mtype == MessageType.EM_CLIENT_CAPABILITY_QUERY.value:
+            self._reply_client_capability_report(src, cmdu)
+        elif mtype in _ACK_ONLY_REQUESTS:
+            # The spec demands a 1905 ACK but no body — we have nothing
+            # to do for higher-layer data, steering, scans, or CAC since
+            # the emulator owns no real radio and no clients.
+            self._send_ack(src, mid)
 
     def _reply_topology_response(self, dst: bytes, query: CMDU) -> None:
         assert self._ctx is not None
@@ -542,6 +557,21 @@ class FakeAgent:
             message_type=MessageType.LINK_METRIC_RESPONSE.value,
             message_id=query.header.message_id,
             typed_tlvs=[LinkMetricResultCode(result_code=0x00)],
+        )
+        send_frame(self._ctx, cmdu_bytes, dst=dst)
+
+    def _reply_client_capability_report(self, dst: bytes, query: CMDU) -> None:
+        """Respond to CLIENT_CAPABILITY_QUERY (Multi-AP v1.0 §17.1.20).
+
+        The emulator owns no associated clients, so the response is a
+        single Client Capability Report TLV with result_code=1 (failure)
+        — the spec's way to say "no such client".
+        """
+        assert self._ctx is not None
+        cmdu_bytes = build_cmdu(
+            message_type=MessageType.EM_CLIENT_CAPABILITY_REPORT.value,
+            message_id=query.header.message_id,
+            typed_tlvs=[ClientCapabilityReport(result_code=0x01)],
         )
         send_frame(self._ctx, cmdu_bytes, dst=dst)
 

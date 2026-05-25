@@ -287,6 +287,36 @@ def test_unsolicited_ap_metrics_carries_metrics_tlvs() -> None:
     assert 0x94 in types and 0xC6 in types  # ApMetrics + RadioMetrics
 
 
+def test_agent_replies_client_capability_query_with_failure() -> None:
+    # type=0x8009 EM_CLIENT_CAPABILITY_QUERY — no clients => result_code=1.
+    out = _drive_agent_with("0000800901090080")
+    assert len(out) == 1
+    assert out[0].header.message_type == MessageType.EM_CLIENT_CAPABILITY_REPORT.value
+    types = {t.tlv_type for t in out[0].tlvs}
+    assert 0x91 in types  # ClientCapabilityReport
+    # result_code byte == 0x01 (failure / no such client)
+    crep = next(t for t in out[0].tlvs if t.tlv_type == 0x91)
+    assert crep.payload[0] == 0x01
+
+
+def test_agent_acks_ack_only_request_types() -> None:
+    """Every type in ``_ACK_ONLY_REQUESTS`` should produce exactly one 1905 ACK."""
+    cases = [
+        ("00008014010a0080", "EM_CLIENT_STEERING_REQUEST"),
+        ("00008016010b0080", "EM_CLIENT_ASSOCIATION_CONTROL_REQUEST"),
+        ("0000801b010c0080", "EM_CHANNEL_SCAN_REQUEST"),
+        ("00008020010d0080", "EM_CAC_REQUEST"),
+        ("00008021010e0080", "EM_CAC_TERMINATION"),
+        ("00008019010f0080", "EM_BACKHAUL_STEERING_REQUEST"),
+    ]
+    for hex_input, label in cases:
+        out = _drive_agent_with(hex_input)
+        assert len(out) == 1, f"{label}: expected 1 reply, got {len(out)}"
+        assert out[0].header.message_type == MessageType.EM_ACK.value, (
+            f"{label}: expected EM_ACK, got 0x{out[0].header.message_type:04x}"
+        )
+
+
 def test_heartbeat_emits_metrics_only_after_onboarding() -> None:
     """Periodic metrics emission must be gated by the WSC-onboarded flag.
 
