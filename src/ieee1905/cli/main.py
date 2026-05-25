@@ -344,8 +344,14 @@ def emulator_controller_cmd(
     try:
         import signal
 
-        signal.pause()
-    except (KeyboardInterrupt, AttributeError):
+        if hasattr(signal, "pause"):
+            signal.pause()  # type: ignore[attr-defined,unused-ignore]
+        else:
+            import time
+
+            while True:
+                time.sleep(3600)
+    except KeyboardInterrupt:
         pass
     finally:
         ctl.stop()
