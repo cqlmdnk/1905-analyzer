@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: ap_autoconfig_search
+description: |
+  AP Autoconfiguration Search (1905.1 §10) issued by an agent
+  discovering the Multi-AP registrar/controller. Carries the
+  agent's AL MAC, the searched role, the requested frequency band,
+  and (EasyMesh R1) a SupportedService TLV identifying the sender
+  as a Multi-AP Agent.
+message_type: 0x0007
+message_id: auto
+variables:
+  al_mac: AL MAC of the searching agent
+  freq_band: "0=2.4 GHz, 1=5 GHz, 2=60 GHz"
+tlvs:
+  - class: AlMacAddress
+    al_mac: "${al_mac}"
+  - class: SearchedRole
+    role: 0
+  - class: AutoconfigFreqBand
+    band: "${freq_band}"
+  - class: SupportedService
+    services: [1]

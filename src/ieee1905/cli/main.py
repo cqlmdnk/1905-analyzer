@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import click
 from rich.console import Console
@@ -243,6 +244,123 @@ def inject_cmd(
         for _ in range(repeat):
             live.inject(frame)
     console.print(f"[green]injected {repeat} frame(s) on {interface}[/]")
+
+
+@cli.command("templates")
+@click.option(
+    "--dir",
+    "extra_dir",
+    type=click.Path(exists=True, file_okay=False),
+    help="Also list templates from a user directory.",
+)
+def list_templates_cmd(extra_dir: str | None) -> None:
+    """List available CMDU templates (built-in + optional user dir)."""
+    from ieee1905.templates import builtin_templates, load_template
+
+    table = Table(title="Available templates")
+    table.add_column("name", style="cyan")
+    table.add_column("message_type")
+    table.add_column("variables")
+    table.add_column("description")
+    for tpl in builtin_templates().values():
+        table.add_row(
+            tpl.name,
+            f"0x{tpl.message_type:04x}",
+            ", ".join(sorted(tpl.required_variables())) or "-",
+            tpl.description.strip().splitlines()[0] if tpl.description else "",
+        )
+    if extra_dir:
+        for path in sorted(Path(extra_dir).glob("*.yaml")):
+            tpl = load_template(path)
+            table.add_row(
+                tpl.name,
+                f"0x{tpl.message_type:04x}",
+                ", ".join(sorted(tpl.required_variables())) or "-",
+                tpl.description.strip().splitlines()[0] if tpl.description else "",
+            )
+    console.print(table)
+
+
+@cli.command("inject-template")
+@click.argument("template_name")
+@click.argument("interface")
+@click.option(
+    "--var",
+    "variables",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Template variable (repeat for several).",
+)
+@click.option(
+    "--template-file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Use a YAML template from this path instead of the built-in named one.",
+)
+@click.option("--dst-mac", default="01:80:c2:00:00:13", show_default=True)
+@click.option("--src-mac", help="Source MAC. Defaults to the interface MAC.")
+@click.option("--profile", type=int, default=1, show_default=True, help="1 or 2 (Profile-2 framing).")
+def inject_template_cmd(
+    template_name: str,
+    interface: str,
+    variables: tuple[str, ...],
+    template_file: str | None,
+    dst_mac: str,
+    src_mac: str | None,
+    profile: int,
+) -> None:
+    """Build a CMDU from a template and inject it on INTERFACE."""
+    from ieee1905.core.tlvs._helpers import parse_mac_str
+    from ieee1905.io.backend import ETHERTYPE_IEEE1905, get_default_backend
+    from ieee1905.io.ethernet import EthernetFrame
+    from ieee1905.io.interfaces import list_interfaces
+    from ieee1905.templates import builtin_templates, load_template
+
+    vars_dict: dict[str, str] = {}
+    for kv in variables:
+        if "=" not in kv:
+            console.print(f"[red]invalid --var {kv!r} (expected key=value)[/]")
+            raise SystemExit(2)
+        k, v = kv.split("=", 1)
+        vars_dict[k.strip()] = v.strip()
+
+    if template_file is not None:
+        tpl = load_template(template_file)
+    else:
+        builtins = builtin_templates()
+        if template_name not in builtins:
+            console.print(
+                f"[red]unknown template {template_name!r}; "
+                f"available: {', '.join(builtins)}[/]"
+            )
+            raise SystemExit(2)
+        tpl = builtins[template_name]
+
+    cmdu = tpl.build(vars_dict)
+    payload = cmdu.to_bytes(profile=profile if profile >= 2 else None)
+
+    if src_mac is None:
+        resolved_src: bytes | None = None
+        for iface in list_interfaces():
+            if iface.name == interface and iface.mac:
+                resolved_src = parse_mac_str(iface.mac)
+                break
+        if resolved_src is None:
+            console.print(
+                f"[red]could not determine source MAC for {interface}; "
+                "pass --src-mac[/]"
+            )
+            raise SystemExit(1)
+        src = resolved_src
+    else:
+        src = parse_mac_str(src_mac)
+
+    frame = EthernetFrame(
+        dst=parse_mac_str(dst_mac), src=src, ethertype=ETHERTYPE_IEEE1905, payload=payload
+    ).to_bytes()
+    backend = get_default_backend()
+    with backend.open_live(interface, bpf_filter=None, promiscuous=False) as live:
+        live.inject(frame)
+    console.print(f"[green]injected template {tpl.name!r} on {interface}[/]")
 
 
 @cli.command("replay")

@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: topology_discovery
+description: |
+  IEEE 1905.1 Topology Discovery message. Carries an AL MAC and a
+  local interface MAC; usually emitted every 1 s by every 1905 node
+  on every wired interface.
+message_type: 0x0000
+message_id: auto
+variables:
+  al_mac: AL MAC address of the sending node
+  interface_mac: MAC of the interface the frame is leaving
+tlvs:
+  - class: AlMacAddress
+    al_mac: "${al_mac}"
+  - class: MacAddress
+    mac: "${interface_mac}"

@@ -72,6 +72,7 @@ def create_app() -> FastAPI:
 
     _register_capture_endpoints(app)
     _register_inject_endpoints(app)
+    _register_template_endpoints(app)
 
     return app
 
@@ -258,6 +259,15 @@ class ReplayRequest(BaseModel):
     ieee1905_only: bool = True
 
 
+class InjectTemplateRequest(BaseModel):
+    interface: str
+    template: str = Field(..., description="Built-in template name.")
+    variables: dict[str, Any] = Field(default_factory=dict)
+    dst_mac: str = "01:80:c2:00:00:13"
+    src_mac: str | None = None
+    profile: int = 1
+
+
 def _register_inject_endpoints(app: FastAPI) -> None:
     @app.post("/api/inject", dependencies=[Depends(require_token)])
     def inject(req: InjectRequest) -> dict[str, Any]:
@@ -323,6 +333,81 @@ def _register_inject_endpoints(app: FastAPI) -> None:
             "skipped_non_1905": stats.skipped_non_1905,
             "skipped_malformed": stats.skipped_malformed,
             "duration_s": stats.duration_s,
+        }
+
+
+def _register_template_endpoints(app: FastAPI) -> None:
+    """List built-in templates and build/inject a CMDU from one."""
+
+    @app.get("/api/templates", dependencies=[Depends(require_token)])
+    def list_templates() -> list[dict[str, Any]]:
+        from ieee1905.templates import builtin_templates
+
+        return [
+            {
+                "name": tpl.name,
+                "description": tpl.description,
+                "message_type": tpl.message_type,
+                "variables": sorted(tpl.required_variables()),
+                "variable_docs": tpl.variables,
+            }
+            for tpl in builtin_templates().values()
+        ]
+
+    @app.post("/api/inject/template", dependencies=[Depends(require_token)])
+    def inject_template(req: InjectTemplateRequest) -> dict[str, Any]:
+        from ieee1905.core.tlvs._helpers import parse_mac_str
+        from ieee1905.io.backend import ETHERTYPE_IEEE1905, get_default_backend
+        from ieee1905.io.ethernet import EthernetFrame
+        from ieee1905.io.interfaces import list_interfaces
+        from ieee1905.templates import TemplateError, builtin_templates
+
+        templates = builtin_templates()
+        if req.template not in templates:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unknown template {req.template!r}; "
+                f"available: {sorted(templates)}",
+            )
+        try:
+            cmdu = templates[req.template].build(req.variables)
+        except TemplateError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        payload = cmdu.to_bytes(profile=req.profile if req.profile >= 2 else None)
+
+        try:
+            dst = parse_mac_str(req.dst_mac)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"bad dst_mac: {exc}") from exc
+
+        src: bytes
+        if req.src_mac is not None:
+            src = parse_mac_str(req.src_mac)
+        else:
+            resolved: bytes | None = None
+            for iface in list_interfaces():
+                if iface.name == req.interface and iface.mac:
+                    resolved = parse_mac_str(iface.mac)
+                    break
+            if resolved is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"could not determine source MAC for {req.interface}",
+                )
+            src = resolved
+
+        frame_bytes = EthernetFrame(
+            dst=dst, src=src, ethertype=ETHERTYPE_IEEE1905, payload=payload
+        ).to_bytes()
+        backend = get_default_backend()
+        with backend.open_live(req.interface, bpf_filter=None, promiscuous=False) as live:
+            live.inject(frame_bytes)
+        return {
+            "template": req.template,
+            "interface": req.interface,
+            "message_type": cmdu.header.message_type,
+            "tlv_count": len(cmdu.tlvs),
+            "payload_bytes": len(payload),
         }
 
 

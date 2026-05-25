@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: topology_query
+description: |
+  IEEE 1905.1 Topology Query. Empty payload — receivers should reply
+  with a Topology Response containing their AL MAC + Device
+  Information TLVs.
+message_type: 0x0002
+message_id: auto
+variables: {}
+tlvs: []

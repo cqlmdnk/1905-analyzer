@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: ap_capability_query
+description: |
+  EasyMesh R1 AP Capability Query (Multi-AP v1.0 §7.2.5). Empty
+  payload; receivers should reply with an AP Capability Report
+  containing AP Capability, AP Radio Basic Capabilities and AP
+  Operational BSS TLVs.
+message_type: 0x8001
+message_id: auto
+variables: {}
+tlvs: []

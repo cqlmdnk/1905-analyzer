@@ -6,6 +6,21 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **YAML template library** — `src/ieee1905/templates/` with a small
+  loader (`load_template`, `Template.build`) and a `builtin/` directory
+  containing four ready-to-use templates:
+  - `topology_discovery` (variables: al_mac, interface_mac)
+  - `topology_query` (no variables)
+  - `ap_autoconfig_search` (variables: al_mac, freq_band)
+  - `ap_capability_query` (no variables)
+  Templates use `${name}` placeholders; values are coerced when
+  obviously a MAC (`"aa:bb:cc:dd:ee:ff"`), `hex:`-prefixed, or
+  `0x`-prefixed string. CLI: `ieee1905 templates` (list),
+  `ieee1905 inject-template <name> <iface> --var key=value [--profile 2]`.
+  REST: `GET /api/templates`, `POST /api/inject/template`. 12 new
+  tests (139 total passing) cover loader edge cases, missing
+  variables, the CLI listing, and the REST happy path with a mocked
+  backend.
 - **PCAP replay** — `ieee1905.io.pcap.replay_pcap()` re-injects every
   frame from a PCAP onto a live interface. ``speed=1.0`` preserves the
   original inter-frame delay (derived from the PCAP timestamps);

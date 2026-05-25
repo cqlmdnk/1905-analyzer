@@ -192,9 +192,14 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
       and a ``stop_event`` for clean cancellation. Wired into the CLI
       (`ieee1905 replay <pcap> <iface>`) and the REST API
       (`POST /api/pcap/replay`).
-- [ ] Template library (`templates/*.yaml`) — deferred; for now the CLI
-      `inject` accepts a hex blob, and the codec lets callers build any
-      CMDU programmatically
+- [x] Template library (`src/ieee1905/templates/builtin/*.yaml`) —
+      4 built-in templates (Topology Discovery / Query, AP-Autoconfig
+      Search, AP Capability Query) with ``${...}`` variable
+      substitution and TLV-class lookup against the typed-TLV catalog.
+      CLI: ``ieee1905 templates`` (list), ``ieee1905 inject-template
+      <name> <iface> --var key=value`` (build + send).
+      REST: ``GET /api/templates``, ``POST /api/inject/template``.
+      Profile-2 framing is opt-in via ``--profile 2``.
 
 ## DUT emulator (ADR-013) — minimal core ✓ done
 
