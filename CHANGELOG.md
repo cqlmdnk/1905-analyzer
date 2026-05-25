@@ -6,6 +6,17 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **PCAP replay** — `ieee1905.io.pcap.replay_pcap()` re-injects every
+  frame from a PCAP onto a live interface. ``speed=1.0`` preserves the
+  original inter-frame delay (derived from the PCAP timestamps);
+  ``speed=2.0`` is twice as fast; ``speed=0`` fires back-to-back.
+  ``loop=True`` repeats until a ``stop_event`` is set. Returns a
+  ``ReplayStats`` (counts of injected / skipped frames + total
+  duration). CLI: ``ieee1905 replay <pcap> <iface>``;
+  REST: ``POST /api/pcap/replay``. 7 new tests (127 total passing)
+  patch the wire backend so we can exercise the iterator, the
+  stop-event abort path, the on-frame callback, and the REST happy /
+  not-found paths without root.
 - **Profile-2 32-bit TLV length framing** — `extended_length=True` on
   `RawTLV.to_bytes`/`from_bytes` and `profile=2` on `CMDU.to_bytes`/
   `from_bytes` switch the wire format to the Multi-AP v2.0 5-byte TLV

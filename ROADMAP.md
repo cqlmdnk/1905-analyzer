@@ -186,8 +186,12 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
 - [x] REST `POST /api/pcap/decode` (upload + decoded JSON)
 - [x] WebSocket `/ws/frames/{interface}` (token handshake, threaded
       sniffer pumping decoded frame JSON to clients)
-- [ ] PCAP replay (timing-preserving or accelerated) — deferred to
-      v0.2.1+
+- [x] PCAP replay — `ieee1905.io.pcap.replay_pcap()` preserves
+      original inter-frame timing (`speed=1.0`), scales it
+      (`speed=2.0` etc.), or fires back-to-back (`speed=0`). Loop mode
+      and a ``stop_event`` for clean cancellation. Wired into the CLI
+      (`ieee1905 replay <pcap> <iface>`) and the REST API
+      (`POST /api/pcap/replay`).
 - [ ] Template library (`templates/*.yaml`) — deferred; for now the CLI
       `inject` accepts a hex blob, and the codec lets callers build any
       CMDU programmatically

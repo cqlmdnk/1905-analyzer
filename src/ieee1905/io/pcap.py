@@ -8,7 +8,9 @@ which backend is active just to load a file.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import threading
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from ieee1905.core import CMDU
@@ -89,3 +91,92 @@ def summarize_pcap(path: str) -> dict[str, int]:
         label = MessageType.describe(frame.cmdu.header.message_type)
         counts[label] = counts.get(label, 0) + 1
     return counts
+
+
+@dataclass(slots=True)
+class ReplayStats:
+    """Counters returned from a replay session."""
+
+    total_frames: int = 0
+    injected: int = 0
+    skipped_non_1905: int = 0
+    skipped_malformed: int = 0
+    duration_s: float = 0.0
+
+
+def replay_pcap(
+    path: str,
+    interface: str,
+    *,
+    speed: float = 1.0,
+    loop: bool = False,
+    ieee1905_only: bool = True,
+    stop_event: threading.Event | None = None,
+    on_frame: Callable[[bytes, float], None] | None = None,
+) -> ReplayStats:
+    """Replay frames from ``path`` onto ``interface``.
+
+    ``speed`` scales the inter-frame delay derived from the original
+    timestamps:
+
+    - ``speed > 0`` preserves timing scaled by ``1/speed`` (e.g. ``2.0``
+      = twice as fast, ``0.5`` = half-speed).
+    - ``speed = 0`` (or negative) sends frames back-to-back with no
+      sleep (as fast as the wire / kernel allows).
+
+    When ``loop`` is True, the PCAP is replayed indefinitely until
+    ``stop_event`` is set. ``ieee1905_only`` filters out non-1905 traffic
+    before injecting. ``on_frame(raw, ts)`` is invoked for every
+    *injected* frame, useful for live progress reporting.
+
+    Requires raw socket privileges on ``interface`` — see ``ieee1905
+    privileges`` for the per-platform notes.
+    """
+    backend = get_default_backend()
+    stats = ReplayStats()
+    started = time.monotonic()
+
+    with backend.open_live(interface, bpf_filter=None, promiscuous=False) as live:
+        while True:
+            prev_ts: float | None = None
+            for raw, ts in backend.open_offline(path):
+                if stop_event is not None and stop_event.is_set():
+                    stats.duration_s = time.monotonic() - started
+                    return stats
+
+                stats.total_frames += 1
+
+                if ieee1905_only:
+                    try:
+                        eth = EthernetFrame.parse(raw)
+                    except EthernetParseError:
+                        stats.skipped_malformed += 1
+                        prev_ts = ts
+                        continue
+                    if eth.ethertype != ETHERTYPE_IEEE1905:
+                        stats.skipped_non_1905 += 1
+                        prev_ts = ts
+                        continue
+
+                if prev_ts is not None and speed > 0:
+                    delta = (ts - prev_ts) / speed
+                    if delta > 0:
+                        if stop_event is not None:
+                            stop_event.wait(timeout=delta)
+                            if stop_event.is_set():
+                                stats.duration_s = time.monotonic() - started
+                                return stats
+                        else:
+                            time.sleep(delta)
+
+                live.inject(raw)
+                stats.injected += 1
+                if on_frame is not None:
+                    on_frame(raw, ts)
+                prev_ts = ts
+
+            if not loop:
+                break
+
+    stats.duration_s = time.monotonic() - started
+    return stats

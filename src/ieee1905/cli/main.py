@@ -245,6 +245,56 @@ def inject_cmd(
     console.print(f"[green]injected {repeat} frame(s) on {interface}[/]")
 
 
+@cli.command("replay")
+@click.argument("path", type=click.Path(exists=True, dir_okay=False))
+@click.argument("interface")
+@click.option(
+    "--speed",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Timing multiplier. 1.0 = original speed, 2.0 = 2x faster, 0 = no delay.",
+)
+@click.option("--loop", is_flag=True, help="Replay indefinitely until Ctrl-C.")
+@click.option(
+    "--all-traffic",
+    is_flag=True,
+    help="Inject non-1905 frames too (default: only ether proto 0x893a).",
+)
+def replay_cmd(path: str, interface: str, speed: float, loop: bool, all_traffic: bool) -> None:
+    """Re-inject frames from a PCAP file onto INTERFACE.
+
+    Original frame timing is preserved by default; use --speed to scale or
+    0 to fire as fast as possible. Requires raw socket privileges.
+    """
+    import threading
+
+    from ieee1905.io.pcap import replay_pcap
+
+    stop = threading.Event()
+    console.print(
+        f"[green]Replaying {path} → {interface}[/] (speed={speed}, loop={loop}). "
+        "Ctrl-C to stop."
+    )
+    try:
+        stats = replay_pcap(
+            path,
+            interface,
+            speed=speed,
+            loop=loop,
+            ieee1905_only=not all_traffic,
+            stop_event=stop,
+        )
+    except KeyboardInterrupt:
+        stop.set()
+        console.print("[yellow]interrupted[/]")
+        return
+    console.print(
+        f"[green]done[/]: injected={stats.injected} skipped_non_1905={stats.skipped_non_1905} "
+        f"skipped_malformed={stats.skipped_malformed} duration={stats.duration_s:.2f}s"
+    )
+
+
 @cli.group("emulator")
 def emulator_group() -> None:
     """Run a minimal DUT emulator (fake agent or fake controller)."""

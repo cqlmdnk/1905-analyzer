@@ -250,6 +250,14 @@ class InjectRequest(BaseModel):
     src_mac: str | None = None
 
 
+class ReplayRequest(BaseModel):
+    interface: str
+    pcap_path: str = Field(..., description="Server-side path to a PCAP/PCAPNG file.")
+    speed: float = Field(1.0, description="Timing multiplier. 0 = back-to-back.")
+    loop: bool = False
+    ieee1905_only: bool = True
+
+
 def _register_inject_endpoints(app: FastAPI) -> None:
     @app.post("/api/inject", dependencies=[Depends(require_token)])
     def inject(req: InjectRequest) -> dict[str, Any]:
@@ -290,6 +298,32 @@ def _register_inject_endpoints(app: FastAPI) -> None:
             for _ in range(req.repeat):
                 live.inject(frame_bytes)
         return {"injected": req.repeat, "interface": req.interface}
+
+    @app.post("/api/pcap/replay", dependencies=[Depends(require_token)])
+    def replay(req: ReplayRequest) -> dict[str, Any]:
+        from ieee1905.io.pcap import replay_pcap
+
+        if not Path(req.pcap_path).is_file():
+            raise HTTPException(status_code=404, detail=f"no such file: {req.pcap_path}")
+        try:
+            stats = replay_pcap(
+                req.pcap_path,
+                req.interface,
+                speed=req.speed,
+                loop=req.loop,
+                ieee1905_only=req.ieee1905_only,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "interface": req.interface,
+            "pcap_path": req.pcap_path,
+            "total_frames": stats.total_frames,
+            "injected": stats.injected,
+            "skipped_non_1905": stats.skipped_non_1905,
+            "skipped_malformed": stats.skipped_malformed,
+            "duration_s": stats.duration_s,
+        }
 
 
 def run(host: str = "127.0.0.1", port: int = 8519, reload: bool = False) -> None:
