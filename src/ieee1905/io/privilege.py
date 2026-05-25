@@ -30,7 +30,7 @@ def _linux_has_cap_net_raw() -> bool:
 
 
 def _check_linux() -> PrivilegeCheck:
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # type: ignore[attr-defined,unused-ignore]
         return PrivilegeCheck(True, "linux", "running as root", None)
     if _linux_has_cap_net_raw():
         return PrivilegeCheck(True, "linux", "CAP_NET_RAW present", None)
@@ -44,7 +44,7 @@ def _check_linux() -> PrivilegeCheck:
 
 
 def _check_darwin() -> PrivilegeCheck:
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # type: ignore[attr-defined,unused-ignore]
         return PrivilegeCheck(True, "darwin", "running as root", None)
     return PrivilegeCheck(
         False,
