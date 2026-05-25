@@ -51,20 +51,25 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
   - Backend runs privileged; browser frontend talks to it via
     localhost + token
 
-## Phase 1 — Core CMDU / TLV codec
+## Phase 1 — Core CMDU / TLV codec ✓ done
 
-- [ ] CMDU header: message version (`0x00`), reserved, message type
+- [x] CMDU header: message version (`0x00`), reserved, message type
       (uint16), MID (uint16), fragment ID, last-fragment + relayed flags
-- [ ] Fragmentation / reassembly (keyed on MID + fragment ID)
-- [ ] TLV base + registry plumbing (registry already exists from Phase 0)
-- [ ] IEEE 1905.1 TLVs (`0x00`–`0x1C`):
+- [x] Fragmentation / reassembly (keyed on MID + fragment ID), stale-group
+      eviction, single-fragment fast path
+- [x] TLV base + registry plumbing; ``RawTLV.parse_one`` iterator and
+      ``decode_raw`` dispatch with Unknown-TLV fall-through
+- [x] ``CMDU.typed_tlvs()`` convenience iterator (Raw → Typed)
+- [x] Cross-platform Ethernet II frame helper (with 802.1Q strip) so the
+      capture side feeds CMDU bytes cleanly
+- [x] IEEE 1905.1 baseline TLVs (`0x00`–`0x1E`, 30 types):
   - `0x00` End of message
   - `0x01` AL MAC address
   - `0x02` MAC address
   - `0x03` Device information
   - `0x04` Device bridging capability
   - `0x06` Non-1905 neighbor device list
-  - `0x07` 1905 neighbor device
+  - `0x07` 1905 Neighbor device
   - `0x08` Link metric query
   - `0x09` Transmitter link metric
   - `0x0A` Receiver link metric
@@ -72,25 +77,37 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
   - `0x0C` Link metric result code
   - `0x0D` SearchedRole
   - `0x0E` AutoconfigFreqBand
-  - `0x0F` Supported service / Searched service
-  - `0x10` AL MAC search
-  - `0x11` Push button event notification
-  - `0x12` Push button join notification
-  - `0x13` Generic PHY device information
-  - `0x14` Device identification
-  - `0x15` Control URL
-  - `0x16` IPv4
-  - `0x17` IPv6
-  - `0x18` Generic PHY event notification
-  - `0x19` 1905 profile version
-  - `0x1A` Power off interface
-  - `0x1B` Interface power change information / request
-  - `0x1C` L2 neighbor device
-- [ ] Message types: Topology Discovery / Notification / Query / Response,
-      Link metric Query / Response, AP-Autoconfig Search / Response / WSC /
-      Renew, Higher-layer Query / Response, Vendor specific
-- [ ] Round-trip property tests (via Hypothesis)
-- [ ] Wireshark cross-validation in CI (compare against `tshark -V`)
+  - `0x0F` SupportedRole
+  - `0x10` SupportedFreqBand
+  - `0x11` WSC frame
+  - `0x12` Push button event notification
+  - `0x13` Push button join notification
+  - `0x14` Generic PHY device information
+  - `0x15` Device identification
+  - `0x16` Control URL
+  - `0x17` IPv4
+  - `0x18` IPv6
+  - `0x19` Generic PHY event notification
+  - `0x1A` 1905 profile version
+  - `0x1B` Power off interface
+  - `0x1C` Interface power change information
+  - `0x1D` Interface power change status
+  - `0x1E` L2 neighbor device
+- [x] Message types enum (18 1905.1 messages: Topology Discovery /
+      Notification / Query / Response, Link metric Query / Response,
+      AP-Autoconfig Search / Response / WSC / Renew, push-button event /
+      join, higher-layer query / response, generic-PHY query / response,
+      interface power-change request / response, vendor specific)
+- [x] Round-trip property tests via Hypothesis (CMDU header + body, plus
+      per-TLV strategies)
+- [x] Committed regression fixture (`tests/fixtures/baseline_1905.pcap`)
+      built from `tests.fixtures.build_baseline_pcap`, covers every
+      registered TLV; regenerable on demand
+- [x] Coverage gate: assertion that every `TLVType` enum value has a
+      registered handler
+- [ ] (deferred to bonus) `tshark -V` cross-validation in CI — see
+      EXPLORATION D.2; current regression fixture covers drift detection
+      between code changes
 
 ## Phase 2 — EasyMesh R1–R4 TLV layer
 

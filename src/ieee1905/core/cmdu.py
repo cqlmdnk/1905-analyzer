@@ -23,10 +23,11 @@ an end-of-message TLV (type 0x00, length 0).
 from __future__ import annotations
 
 import struct
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from ieee1905.core.tlv import RawTLV, TLVParseError
+from ieee1905.core.tlv import RawTLV, TLVParseError, decode_raw
 
 #: EtherType reserved for IEEE 1905.1 frames.
 ETHERTYPE_IEEE1905 = 0x893A
@@ -114,6 +115,15 @@ class CMDU:
         if append_end_of_message and not seen_eom:
             parts.append(RawTLV(self.END_OF_MESSAGE_TYPE, b"").to_bytes())
         return b"".join(parts)
+
+    def typed_tlvs(self) -> Iterator[object]:
+        """Yield each TLV decoded into its typed object via the registry.
+
+        Unknown TLVs are yielded as :class:`RawTLV` instances (the
+        "Unknown" path the analyzer UI surfaces as hex + ASCII).
+        """
+        for raw in self.tlvs:
+            yield decode_raw(raw)
 
     @classmethod
     def from_bytes(cls, data: bytes, *, require_end_of_message: bool = True) -> CMDU:
