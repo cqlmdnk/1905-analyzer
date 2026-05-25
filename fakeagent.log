@@ -1,0 +1,110 @@
+[05/25/26 22:49:22] INFO     FakeAgent started on en6 (AL=02:00:de:ad:be:ef)    
+Fake agent running on en6. Ctrl-C to stop.
+Exception in thread Thread-1 (_sniff_loop):
+                    WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/lib/python3.12/threading.py", line 1073, in _bootstrap_inner
+                    WARNING  autoconfig search send failed: 'NoneType' object is
+                             not callable                                       
+    self.run()
+  File "/opt/homebrew/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/lib/python3.12/threading.py", line 1010, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/bbtezcan/1905_analyzer/src/ieee1905/emulator/agent.py", line 141, in _sniff_loop
+    run_sniff_loop(self._ctx, self._on_cmdu)
+  File "/Users/bbtezcan/1905_analyzer/src/ieee1905/emulator/_common.py", line 105, in run_sniff_loop
+    with backend.open_live(ctx.interface, promiscuous=True) as live:
+  File "/Users/bbtezcan/1905_analyzer/src/ieee1905/io/backend.py", line 116, in __enter__
+    self._socket = l2_socket_cls(
+                   ^^^^^^^^^^^^^^
+TypeError: 'NoneType' object is not callable
+[05/25/26 22:49:27] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:49:32] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:49:37] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:49:42] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:49:48] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:49:53] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+                    WARNING  autoconfig search send failed: 'NoneType' object is
+                             not callable                                       
+[05/25/26 22:49:58] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:50:03] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:50:08] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:50:13] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:50:18] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:50:23] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+                    WARNING  autoconfig search send failed: 'NoneType' object is
+                             not callable                                       
+[05/25/26 22:50:28] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:50:33] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:50:38] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:50:43] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:50:48] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:50:53] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+                    WARNING  autoconfig search send failed: 'NoneType' object is
+                             not callable                                       
+[05/25/26 22:50:58] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:51:03] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:51:08] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:51:13] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:51:18] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:51:23] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+                    WARNING  autoconfig search send failed: 'NoneType' object is
+                             not callable                                       
+[05/25/26 22:51:28] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:51:33] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:51:38] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:51:44] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:51:49] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:51:54] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+                    WARNING  autoconfig search send failed: 'NoneType' object is
+                             not callable                                       
+[05/25/26 22:51:59] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:52:04] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:52:09] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:52:14] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:52:19] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:52:24] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+                    WARNING  autoconfig search send failed: 'NoneType' object is
+                             not callable                                       
+[05/25/26 22:52:29] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:52:34] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    
+[05/25/26 22:52:39] WARNING  topology discovery send failed: 'NoneType' object  
+                             is not callable                                    

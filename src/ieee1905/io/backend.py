@@ -9,6 +9,7 @@ backend for higher throughput in bridge mode.
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Protocol
@@ -113,6 +114,8 @@ class _ScapyLiveSession(AbstractContextManager["_ScapyLiveSession"]):
         from scapy.config import conf
 
         l2_socket_cls: Any = conf.L2socket
+        if l2_socket_cls is None:
+            l2_socket_cls = _resolve_l2_socket_fallback()
         self._socket = l2_socket_cls(
             iface=self._interface,
             filter=self._bpf_filter,
@@ -149,6 +152,34 @@ class _ScapyLiveSession(AbstractContextManager["_ScapyLiveSession"]):
                 self._socket.close()
             finally:
                 self._socket = None
+
+
+def _resolve_l2_socket_fallback() -> Any:
+    """Pick a sane L2 socket class when ``scapy.config.conf.L2socket`` is None.
+
+    Some Scapy 2.7 builds — particularly on macOS — leave ``conf.L2socket``
+    unset after import, which makes ``conf.L2socket(...)`` raise
+    ``TypeError: 'NoneType' object is not callable``. Resolve the
+    platform-native class explicitly so capture + inject still work.
+    """
+    if sys.platform == "darwin":
+        from scapy.arch.bpf.supersocket import L2bpfSocket
+
+        return L2bpfSocket
+    if sys.platform.startswith("linux"):
+        from scapy.arch.linux import L2Socket as _LinuxL2Socket
+
+        return _LinuxL2Socket
+    if sys.platform == "win32":
+        # Windows ships its L2 socket via Npcap; conf.L2socket is usually
+        # set there, but if not, the libpcap-backed class is the right one.
+        from scapy.arch.libpcap import L2pcapListenSocket  # type: ignore[attr-defined]
+
+        return L2pcapListenSocket
+    raise RuntimeError(
+        f"no L2 socket fallback for platform {sys.platform!r}; "
+        "set scapy.config.conf.L2socket manually"
+    )
 
 
 _default_backend: CaptureBackend | None = None
