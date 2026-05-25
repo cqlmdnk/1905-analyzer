@@ -191,6 +191,25 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
       `inject` accepts a hex blob, and the codec lets callers build any
       CMDU programmatically
 
+## DUT emulator (ADR-013) — minimal core ✓ done
+
+- [x] `src/ieee1905/emulator/agent.py` — fake EasyMesh agent
+  - Sends Topology Discovery every 5 s, AP-Autoconfig Search every 30 s
+  - Replies to Topology Query → Topology Response (AL MAC + Device Info)
+  - Replies to AP Capability Query → Capability Report (radio basic caps
+    + operational BSS + supported role/freq band)
+  - Replies to AP Metrics Query → Metrics Response
+  - Re-triggers autoconfig on Renew
+- [x] `src/ieee1905/emulator/controller.py` — fake EasyMesh controller
+  - Sends Topology Discovery every 5 s
+  - Replies to AP-Autoconfig Search → Autoconfig Response (registrar
+    role, mirrored freq band)
+  - Issues Topology Query in response to Topology Notification
+  - ACKs AP Capability Reports
+- [x] CLI: `ieee1905 emulator agent <iface>`, `ieee1905 emulator controller <iface>`
+- [ ] (later) WSC encapsulation and DPP onboarding flow (deferred until
+      we have real-DUT lab time)
+
 ## Phase 4 — Bridge / MITM engine
 
 - [ ] Select two interfaces (in the UI)

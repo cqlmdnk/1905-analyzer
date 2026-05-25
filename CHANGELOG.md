@@ -6,6 +6,25 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **DUT emulator ✓ core complete** (ADR-013) — `src/ieee1905/emulator/`:
+  - `FakeAgent`: periodically emits Topology Discovery (5 s) and
+    AP-Autoconfig Search (30 s); replies to inbound Topology Query,
+    AP Capability Query, AP Metrics Query, and AP-Autoconfig Renew.
+  - `FakeController`: emits Topology Discovery (5 s); replies to
+    AP-Autoconfig Search (mirroring the requested freq band) and
+    Topology Notification (issues Topology Query back); ACKs AP
+    Capability Reports.
+  - Shared `_common.py` with the build_cmdu / send_frame / sniff loop
+    plumbing; both emulators run a daemon sniff thread and a daemon
+    heartbeat thread keyed on a `threading.Event` stop signal.
+  - CLI: `ieee1905 emulator agent <iface>` and
+    `ieee1905 emulator controller <iface>` with sensible MAC defaults.
+  - 4 new tests (110 total passing): the response-building logic is
+    exercised against a mocked `send_frame` so the tests don't need a
+    privileged socket — they decode the produced frame back to verify
+    the emitted message type and TLV set.
+  - WSC encapsulation and DPP onboarding deferred until we have a real
+    device on the bench to validate against.
 - **Phase 3 ✓ core complete** — capture / inject I/O surface:
   - `src/ieee1905/io/pcap.py`: `iter_pcap()` yields `CapturedFrame`
     records (timestamp, src/dst MAC, ethertype, decoded `CMDU` or

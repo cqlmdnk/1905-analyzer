@@ -245,6 +245,106 @@ def inject_cmd(
     console.print(f"[green]injected {repeat} frame(s) on {interface}[/]")
 
 
+@cli.group("emulator")
+def emulator_group() -> None:
+    """Run a minimal DUT emulator (fake agent or fake controller)."""
+
+
+@emulator_group.command("agent")
+@click.argument("interface")
+@click.option(
+    "--al-mac",
+    default="02:aa:bb:cc:dd:01",
+    show_default=True,
+    help="AL MAC address the fake agent will advertise.",
+)
+@click.option(
+    "--radio-id",
+    default="02:aa:bb:cc:ee:01",
+    show_default=True,
+    help="Radio unique identifier (BSSID-shaped 6 bytes).",
+)
+@click.option(
+    "--bssid",
+    default="02:aa:bb:cc:ff:01",
+    show_default=True,
+    help="BSSID exposed in operational BSS / capability reports.",
+)
+@click.option("--ssid", default="emulator-mesh", show_default=True)
+@click.option("--freq-band", type=int, default=1, show_default=True, help="0=2.4 GHz, 1=5 GHz, 2=60 GHz")
+def emulator_agent_cmd(
+    interface: str, al_mac: str, radio_id: str, bssid: str, ssid: str, freq_band: int
+) -> None:
+    """Start the fake agent. Press Ctrl-C to stop."""
+    from ieee1905.core.tlvs._helpers import parse_mac_str
+    from ieee1905.emulator import FakeAgent
+
+    agent = FakeAgent(
+        interface=interface,
+        al_mac=parse_mac_str(al_mac),
+        radio_id=parse_mac_str(radio_id),
+        bssid=parse_mac_str(bssid),
+        ssid=ssid.encode("utf-8"),
+        freq_band=freq_band,
+    )
+    agent.start()
+    console.print(f"[green]Fake agent running on {interface}. Ctrl-C to stop.[/]")
+    try:
+        import signal
+
+        signal.pause()
+    except (KeyboardInterrupt, AttributeError):
+        # signal.pause() is missing on Windows; fall through to stop.
+        pass
+    finally:
+        agent.stop()
+
+
+@emulator_group.command("controller")
+@click.argument("interface")
+@click.option(
+    "--al-mac",
+    default="02:00:00:00:00:01",
+    show_default=True,
+    help="AL MAC address the fake controller will advertise.",
+)
+@click.option(
+    "--radio-id",
+    default="02:00:00:00:01:01",
+    show_default=True,
+)
+@click.option(
+    "--bssid",
+    default="02:00:00:00:02:01",
+    show_default=True,
+)
+@click.option("--ssid", default="emulator-mesh", show_default=True)
+def emulator_controller_cmd(
+    interface: str, al_mac: str, radio_id: str, bssid: str, ssid: str
+) -> None:
+    """Start the fake controller. Press Ctrl-C to stop."""
+    from ieee1905.core.tlvs._helpers import parse_mac_str
+    from ieee1905.emulator import FakeController
+
+    ctl = FakeController(
+        interface=interface,
+        al_mac=parse_mac_str(al_mac),
+        radio_id=parse_mac_str(radio_id),
+        bssid=parse_mac_str(bssid),
+        ssid=ssid.encode("utf-8"),
+    )
+    ctl.start()
+    console.print(f"[green]Fake controller running on {interface}. Ctrl-C to stop.[/]")
+    try:
+        import signal
+
+        signal.pause()
+    except (KeyboardInterrupt, AttributeError):
+        pass
+    finally:
+        ctl.stop()
+
+
 def main() -> None:
     cli()
 
