@@ -555,8 +555,37 @@ def emulator_group() -> None:
 )
 @click.option("--ssid", default="emulator-mesh", show_default=True)
 @click.option("--freq-band", type=int, default=1, show_default=True, help="0=2.4 GHz, 1=5 GHz, 2=60 GHz")
+@click.option(
+    "--topology-interval-s",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Seconds between Topology Discovery emissions.",
+)
+@click.option(
+    "--autoconfig-interval-s",
+    type=float,
+    default=30.0,
+    show_default=True,
+    help="Seconds between AP-Autoconfig Search emissions until onboarding completes.",
+)
+@click.option(
+    "--metrics-interval-s",
+    type=float,
+    default=30.0,
+    show_default=True,
+    help="Seconds between unsolicited AP Metrics Response emissions (post-onboarding).",
+)
 def emulator_agent_cmd(
-    interface: str, al_mac: str, radio_id: str, bssid: str, ssid: str, freq_band: int
+    interface: str,
+    al_mac: str,
+    radio_id: str,
+    bssid: str,
+    ssid: str,
+    freq_band: int,
+    topology_interval_s: float,
+    autoconfig_interval_s: float,
+    metrics_interval_s: float,
 ) -> None:
     """Start the fake agent. Press Ctrl-C to stop."""
     from ieee1905.core.tlvs._helpers import parse_mac_str
@@ -569,6 +598,9 @@ def emulator_agent_cmd(
         bssid=parse_mac_str(bssid),
         ssid=ssid.encode("utf-8"),
         freq_band=freq_band,
+        topology_interval_s=topology_interval_s,
+        autoconfig_interval_s=autoconfig_interval_s,
+        metrics_interval_s=metrics_interval_s,
     )
     agent.start()
     console.print(f"[green]Fake agent running on {interface}. Ctrl-C to stop.[/]")

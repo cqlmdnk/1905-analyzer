@@ -1,16 +1,53 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Minimal Multi-AP **agent** emulator.
+"""Multi-AP **agent** emulator with full R3 onboarding.
 
-Behavior:
+The emulator implements the agent-side of every CMDU exchange a
+Multi-AP R3 controller drives during onboarding and routine operation,
+so it can pass strict controller validators (e.g. strict derived
+stacks) without spamming retries.
 
-- Sends a Topology Discovery (1905.1) every ``topology_interval_s`` (default 5 s).
-- Sends an AP-Autoconfig Search every ``autoconfig_interval_s`` (default
-  30 s) until a Response with a matching frequency band is observed.
-- Replies to inbound Topology Query, AP-Autoconfig Renew, AP Capability
-  Query and AP Metrics Query messages with appropriate canned content.
+Periodic emissions (driven by ``_heartbeat_loop``)
 
-The state machine here is intentionally minimal — interop testing needs a
-peer that *responds*, not full controller-style mesh management.
+- Topology Discovery — every ``topology_interval_s`` (default 5 s).
+- AP-Autoconfig Search — every ``autoconfig_interval_s`` (default
+  30 s). The reply is an AP-Autoconfig Response (handled below); on
+  receipt we initiate the WSC enrollee handshake.
+- AP Metrics Response — every ``metrics_interval_s`` (default 30 s),
+  *only after* WSC onboarding has produced at least one BSS credential.
+
+Onboarding (WSC M1 / M2 enrollee, see ``ieee1905.emulator.wsc``)
+
+- AP-Autoconfig Response  -> emit AP-Autoconfig WSC carrying M1.
+- AP-Autoconfig WSC (M2)  -> derive WSC keys, verify outer
+  Authenticator + inner Key Wrap Authenticator, decrypt Encrypted
+  Settings, extract BssCredential(s), mark ``_onboarded`` true.
+- AP-Autoconfig Renew     -> drop the cached WSC state, re-search.
+
+Inbound CMDU handlers
+
+- Topology Query                 -> Topology Response (DeviceInfo +
+  SupportedService + AP Operational BSS + Multi-AP Profile).
+- Link Metric Query              -> Link Metric Response (single
+  LinkMetricResultCode "no neighbors").
+- AP Capability Query            -> AP Capability Report with ApCap,
+  ApRadioBasicCaps, ApHt/HeCaps, ChannelScanCaps, CacCaps,
+  Profile2ApCap, MetricCollectionInterval.
+- AP Metrics Query               -> AP Metrics Response (ApMetrics +
+  RadioMetrics).
+- Channel Preference Query       -> Channel Preference Report.
+- Channel Selection Request      -> Channel Selection Response + a
+  follow-up Operating Channel Report.
+- Backhaul STA Capability Query  -> Backhaul STA Capability Report.
+- Client Capability Query        -> Client Capability Report
+  (result_code=1: no such client).
+- Bare 1905 ACK is the reply for: HIGHER_LAYER_DATA,
+  MULTI_AP_POLICY_CONFIG_REQUEST, CLIENT_STEERING_REQUEST,
+  CLIENT_ASSOCIATION_CONTROL_REQUEST, CHANNEL_SCAN_REQUEST,
+  CAC_REQUEST, CAC_TERMINATION, BACKHAUL_STEERING_REQUEST.
+
+Intentional gaps: no multi-radio, no associated clients, no DPP,
+no encrypted 1905 transport. Anything outside the list above is
+silently dropped.
 """
 
 from __future__ import annotations

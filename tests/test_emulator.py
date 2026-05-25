@@ -17,11 +17,12 @@ from ieee1905.cli.main import cli
 from ieee1905.core import CMDU, CMDUHeader, MessageType, RawTLV
 from ieee1905.core.cmdu import CMDU_HEADER_SIZE
 from ieee1905.core.tlv import encode_typed
-from ieee1905.core.tlvs import AlMacAddress, AutoconfigFreqBand, SearchedRole
+from ieee1905.core.tlvs import AlMacAddress, AutoconfigFreqBand, SearchedRole, WscFrame
 from ieee1905.emulator._common import EmulatorContext
 from ieee1905.emulator.agent import FakeAgent
 from ieee1905.emulator.controller import FakeController
 from ieee1905.io.ethernet import EthernetFrame
+from tests.test_wsc import _build_m2
 
 AGENT_MAC = b"\x02\xaa\xbb\xcc\xdd\x01"
 CONTROLLER_MAC = b"\x02\x00\x00\x00\x00\x01"
@@ -315,6 +316,55 @@ def test_agent_acks_ack_only_request_types() -> None:
         assert out[0].header.message_type == MessageType.EM_ACK.value, (
             f"{label}: expected EM_ACK, got 0x{out[0].header.message_type:04x}"
         )
+
+
+def test_full_wsc_onboarding_end_to_end() -> None:
+    """Drive an Agent through the full Search -> M1 -> M2 -> onboarded path.
+
+    The test reuses the fake-registrar fixture from test_wsc.py to build
+    a spec-conformant M2 in response to whatever M1 the agent emits,
+    then feeds it back as an AP-Autoconfig WSC CMDU. Success criteria:
+    the agent's ``_onboarded`` flag flips and ``_bss_credentials`` is
+    populated with the SSID/network-key the simulated registrar sent.
+    """
+    agent = _new_agent()
+    captured: list[tuple[bytes, bytes]] = []  # (dst, cmdu_bytes)
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append((dst or b"\xff" * 6, cmdu_bytes))
+
+    with patch("ieee1905.emulator.agent.send_frame", side_effect=fake_send):
+        # 1) Trigger M1 by injecting an AP-Autoconfig Response.
+        agent._on_autoconfig_response(
+            CONTROLLER_MAC,
+            CMDU.from_bytes(bytes.fromhex("0000000801000080") + b"\x00\x00\x00"),
+        )
+        assert agent._wsc_session is not None
+        assert len(captured) == 1
+        # The CMDU the agent just sent should be AP-Autoconfig WSC (M1).
+        m1_cmdu = CMDU.from_bytes(captured[0][1])
+        assert m1_cmdu.header.message_type == MessageType.AP_AUTOCONFIGURATION_WSC.value
+        # 2) Build an M2 against the live session and feed it back.
+        m2_bytes, _, _ = _build_m2(
+            agent._wsc_session, ssid=b"home-mesh", network_key=b"strong-password"
+        )
+        m2_cmdu = CMDU(
+            header=CMDUHeader(
+                message_type=MessageType.AP_AUTOCONFIGURATION_WSC.value,
+                message_id=0x4321,
+            ),
+            tlvs=[
+                encode_typed(WscFrame(wsc_payload=m2_bytes)),
+                RawTLV(tlv_type=0x00, payload=b""),
+            ],
+        )
+        agent._on_wsc(CONTROLLER_MAC, m2_cmdu)
+
+    assert agent._onboarded is True
+    assert len(agent._bss_credentials) == 1
+    cred = agent._bss_credentials[0]
+    assert cred.ssid == b"home-mesh"
+    assert cred.network_key == b"strong-password"
 
 
 def test_heartbeat_emits_metrics_only_after_onboarding() -> None:
