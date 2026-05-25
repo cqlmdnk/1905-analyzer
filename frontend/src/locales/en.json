@@ -1,0 +1,13 @@
+{
+  "app": {
+    "title": "ieee1905-suite",
+    "tagline": "IEEE 1905.1 + EasyMesh analyzer / injector / bridge"
+  },
+  "home": {
+    "welcome": "Welcome",
+    "status_phase_0": "Backend skeleton is online. Capture, inject, bridge, and conformance modules arrive in later phases.",
+    "interfaces": "Network interfaces",
+    "privileges": "Privileges",
+    "refresh": "Refresh"
+  }
+}

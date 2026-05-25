@@ -1,0 +1,13 @@
+{
+  "app": {
+    "title": "ieee1905-suite",
+    "tagline": "IEEE 1905.1 + EasyMesh analyzer / injector / köprü"
+  },
+  "home": {
+    "welcome": "Hoş geldin",
+    "status_phase_0": "Backend iskeleti çalışıyor. Capture, inject, bridge ve conformance modülleri sonraki fazlarda eklenecek.",
+    "interfaces": "Ağ arayüzleri",
+    "privileges": "Yetkiler",
+    "refresh": "Yenile"
+  }
+}

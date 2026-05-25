@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ieee1905-suite"
+version = "0.0.1.dev0"
+description = "Cross-platform IEEE 1905.1 + EasyMesh analyzer, injector, bridge/MITM and conformance test suite"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "GPL-2.0-or-later" }
+authors = [{ name = "ieee1905-suite contributors" }]
+keywords = ["ieee1905", "easymesh", "multi-ap", "wifi", "packet-analyzer", "conformance"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Telecommunications Industry",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Networking :: Monitoring",
+    "Topic :: Software Development :: Testing",
+]
+
+dependencies = [
+    "scapy>=2.5.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "websockets>=12.0",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "rich>=13.7",
+    "click>=8.1",
+    "platformdirs>=4.2",
+]
+
+[project.optional-dependencies]
+pcap = [
+    "pcapy-ng>=1.0.9; sys_platform != 'win32'",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "hypothesis>=6.98",
+    "httpx>=0.27",
+    "ruff>=0.3",
+    "mypy>=1.9",
+    "types-PyYAML",
+]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.5",
+]
+
+[project.scripts]
+ieee1905 = "ieee1905.cli.main:main"
+ieee1905-suite = "ieee1905.api.app:run"
+
+[project.urls]
+Homepage = "https://github.com/REPLACE_ME/ieee1905-suite"
+Documentation = "https://github.com/REPLACE_ME/ieee1905-suite#readme"
+Repository = "https://github.com/REPLACE_ME/ieee1905-suite"
+Issues = "https://github.com/REPLACE_ME/ieee1905-suite/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ieee1905"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "RUF", "A", "BLE", "PLC"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Subcommand handlers lazy-import heavy modules so `ieee1905 --version` stays fast.
+"src/ieee1905/cli/main.py" = ["PLC0415"]
+# Backend wrappers import scapy lazily so importing the package never pulls scapy.
+"src/ieee1905/io/backend.py" = ["PLC0415"]
+"src/ieee1905/io/interfaces.py" = ["PLC0415"]
+"src/ieee1905/io/privilege.py" = ["PLC0415"]
+"src/ieee1905/api/app.py" = ["PLC0415"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_return_any = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
