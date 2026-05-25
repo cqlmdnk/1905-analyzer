@@ -93,6 +93,11 @@ class MessageType(IntEnum):
     EM_DPP_BOOTSTRAPPING_URI_NOTIFICATION = 0x803C
     EM_AGENT_LIST = 0x8043
 
+    # ---- Wi-Fi EasyMesh R4 message types -----------------------------------
+    EM_AVAILABLE_SPECTRUM_INQUIRY = 0x8044
+    EM_AVAILABLE_SPECTRUM_INQUIRY_RESPONSE = 0x8045
+    EM_QOS_MANAGEMENT_NOTIFICATION = 0x8046
+
     @classmethod
     def describe(cls, value: int) -> str:
         """Human-readable label, falling back to a hex code for unknowns."""

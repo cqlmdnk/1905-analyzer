@@ -135,6 +135,20 @@ class TLVType(IntEnum):
     EM_DEVICE_INVENTORY = 0xDB
     EM_AGENT_LIST = 0xDF
 
+    # ---- Wi-Fi EasyMesh R4 (Multi-AP Specification v4.0) -------------------
+    # Spec: Multi-AP Specification v4.0 §17.2.x. Wi-Fi 7 / EHT / MLD additions.
+
+    EM_AP_WIFI6_CAPABILITIES = 0xAB  # carryover slot reserved earlier in numbering
+    EM_AP_EHT_OPERATIONS = 0xE0
+    EM_AP_WIFI7_AGENT_CAPABILITIES = 0xE1
+    EM_AGENT_AP_MLD_CONFIGURATION = 0xE2
+    EM_BACKHAUL_STA_MLD_CONFIGURATION = 0xE3
+    EM_ASSOCIATED_STA_MLD_CONFIGURATION = 0xE4
+    EM_AFFILIATED_STA_METRICS = 0xE5
+    EM_AFFILIATED_AP_METRICS = 0xE6
+    EM_TID_TO_LINK_MAPPING_POLICY = 0xE7
+    EM_EHT_OPERATIONS = 0xE8
+
     @classmethod
     def describe(cls, value: int) -> str:
         try:

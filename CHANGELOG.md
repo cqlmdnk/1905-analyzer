@@ -6,6 +6,23 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Phase 2 ✓ complete** — EasyMesh R4 TLV layer (Wi-Fi 7 / EHT / MLD):
+  - 10 R4 TLVs (`0xAB` + `0xE0`–`0xE8`) implemented in
+    `src/ieee1905/core/tlvs/easymesh_r4.py`:
+    AP Wi-Fi 6 Capabilities (HE per-role), AP / aggregate EHT
+    Operations (with optional EHT operation info bytes, 4-byte EHT
+    MCS NSS set, disabled subchannel bitmap), AP Wi-Fi 7 Agent
+    Capabilities (per-radio EMLSR/EMLMR/NSTR/STR flags), Agent AP /
+    Backhaul STA / Associated STA MLD Configuration sharing a common
+    affiliated-link list, Affiliated STA / AP Metrics for MLO,
+    TID-to-Link Mapping Policy (8 TIDs × bitmap).
+  - 3 R4 message types added (Available Spectrum Inquiry / Response,
+    QoS Management Notification).
+  - Regression fixture: `tests/fixtures/easymesh_r4.pcap`.
+  - 6 new tests (97 total passing). Added a project-wide coverage
+    test that asserts every `TLVType` enum value has a handler.
+  - **Phase 2 total:** 86 EasyMesh TLVs across R1-R4 registered with
+    the codec (R1 36 + R2 25 + R3 15 + R4 10).
 - **Phase 2 (R3 slice) complete** — EasyMesh R3 TLV layer:
   - 15 R3 TLVs (`0xCD`–`0xDF`) implemented in
     `src/ieee1905/core/tlvs/easymesh_r3.py` (DPP onboarding, BSS

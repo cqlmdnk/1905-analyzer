@@ -157,10 +157,20 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
       Direct Encap DPP, BSS Configuration Request / Response / Result,
       Chirp Notification, 1905 Encap EAPOL, Reconfig Trigger, …).
 - [x] R3 regression fixture (`tests/fixtures/easymesh_r3.pcap`).
-- [ ] **R4 TLVs**: Wi-Fi 6 / 6E / 7 extensions, EHT capabilities,
-      Affiliated AP / STA, MLD Configuration, AID, …
-- [ ] Every TLV carries a spec citation comment (`# spec: §17.2.x`)
-- [ ] Profile-2 support (32-bit TLV length, from R2 onward)
+- [x] **R4 TLVs** (10 types, `0xAB` + `0xE0`–`0xE8`) — covered in
+      `src/ieee1905/core/tlvs/easymesh_r4.py`:
+      AP Wi-Fi 6 Capabilities, AP EHT Operations / EHT Operations,
+      AP Wi-Fi 7 Agent Capabilities (per-radio EMLSR/EMLMR/NSTR/STR),
+      Agent AP / Backhaul STA / Associated STA MLD Configuration
+      (with AffiliatedLink sub-records), Affiliated STA Metrics,
+      Affiliated AP Metrics, TID-to-Link Mapping Policy.
+- [x] R4 message types added (Available Spectrum Inquiry / Response,
+      QoS Management Notification).
+- [x] Every TLV carries a `spec_ref` metadata string
+      (`Multi-AP vX.Y §17.2.NN`).
+- [x] R4 regression fixture (`tests/fixtures/easymesh_r4.pcap`).
+- [x] **Phase 2 ✓ complete** — total: 86 EasyMesh TLVs across R1-R4
+      registered with the codec (R1 36 + R2 25 + R3 15 + R4 10).
 
 ## Phase 3 — Capture & inject I/O
 
