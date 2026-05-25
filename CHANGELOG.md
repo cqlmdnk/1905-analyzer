@@ -6,6 +6,19 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Phase 2 (R3 slice) complete** — EasyMesh R3 TLV layer:
+  - 15 R3 TLVs (`0xCD`–`0xDF`) implemented in
+    `src/ieee1905/core/tlvs/easymesh_r3.py` (DPP onboarding, BSS
+    configuration request/response/report, BSSID, service
+    prioritization rules, DSCP mapping table, device inventory with
+    chipset-vendor sub-records, agent list).
+  - 14 R3 message types added to `MessageType` (Proxied / Direct
+    Encap DPP, BSS Config Request / Response / Result, Chirp
+    Notification, 1905 Encap EAPOL, Reconfig Trigger, …).
+  - Opaque-payload TLVs (DPP frames, EAPOL frames, BSS configuration
+    objects) are stored as `bytes`; a future plugin can dissect them.
+  - Regression fixture: `tests/fixtures/easymesh_r3.pcap` (15 frames).
+  - 5 new tests (91 total passing). R3 coverage gate added.
 - **Phase 2 (R2 slice) complete** — EasyMesh R2 TLV layer:
   - 25 R2 TLVs (`0xA4`–`0xCC`) implemented in
     `src/ieee1905/core/tlvs/easymesh_r2.py` (channel scan, Profile-2

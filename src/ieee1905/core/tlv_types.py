@@ -115,6 +115,26 @@ class TLVType(IntEnum):
     EM_BACKHAUL_STA_RADIO_CAPABILITIES = 0xCB
     EM_AKM_SUITE_CAPABILITIES = 0xCC
 
+    # ---- Wi-Fi EasyMesh R3 (Multi-AP Specification v3.0) -------------------
+    # Spec: Multi-AP Specification v3.0 §17.2.x. DPP onboarding, BSS
+    # configuration and device inventory are the headline additions.
+
+    EM_1905_ENCAP_DPP = 0xCD
+    EM_1905_ENCAP_EAPOL = 0xCE
+    EM_DPP_BOOTSTRAPPING_URI_NOTIFICATION = 0xCF
+    EM_BACKHAUL_BSS_CONFIGURATION = 0xD0
+    EM_DPP_MESSAGE = 0xD1
+    EM_DPP_CCE_INDICATION = 0xD2
+    EM_DPP_CHIRP_VALUE = 0xD3
+    EM_BSS_CONFIGURATION_REPORT = 0xD4
+    EM_BSSID = 0xD5
+    EM_SERVICE_PRIORITIZATION_RULE = 0xD6
+    EM_DSCP_MAPPING_TABLE = 0xD7
+    EM_BSS_CONFIGURATION_REQUEST = 0xD8
+    EM_BSS_CONFIGURATION_RESPONSE = 0xDA
+    EM_DEVICE_INVENTORY = 0xDB
+    EM_AGENT_LIST = 0xDF
+
     @classmethod
     def describe(cls, value: int) -> str:
         try:

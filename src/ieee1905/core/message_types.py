@@ -77,6 +77,22 @@ class MessageType(IntEnum):
     EM_BACKHAUL_STA_CAPABILITY_REPORT = 0x8027
     EM_FAILED_CONNECTION = 0x8033
 
+    # ---- Wi-Fi EasyMesh R3 message types -----------------------------------
+    EM_DPP_CCE_INDICATION = 0x801F
+    EM_1905_REKEY_REQUEST = 0x8028
+    EM_1905_DECRYPTION_FAILURE = 0x8029
+    EM_CAC_STATUS_REPORT = 0x8032
+    EM_PROXIED_ENCAP_DPP = 0x8034
+    EM_DIRECT_ENCAP_DPP = 0x8035
+    EM_RECONFIG_TRIGGER = 0x8036
+    EM_BSS_CONFIGURATION_REQUEST = 0x8037
+    EM_BSS_CONFIGURATION_RESPONSE = 0x8038
+    EM_BSS_CONFIGURATION_RESULT = 0x8039
+    EM_CHIRP_NOTIFICATION = 0x803A
+    EM_1905_ENCAP_EAPOL = 0x803B
+    EM_DPP_BOOTSTRAPPING_URI_NOTIFICATION = 0x803C
+    EM_AGENT_LIST = 0x8043
+
     @classmethod
     def describe(cls, value: int) -> str:
         """Human-readable label, falling back to a hex code for unknowns."""

@@ -146,9 +146,17 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
       device today needs it; standard 2-byte length covers all R2 TLVs
       below 64 KB and we can add a Profile-2 framer when a real device
       requires it).
-- [ ] **R3 TLVs**: DPP onboarding (Chirp value, DPP CCE, DPP Bootstrapping
-      URI), 1905 Encap DPP, Device Inventory, BSS Configuration Request /
-      Response / Report, Agent List, …
+- [x] **R3 TLVs** (15 types, `0xCD`–`0xDF`) — covered in
+      `src/ieee1905/core/tlvs/easymesh_r3.py`:
+      1905 Encap DPP / EAPOL, DPP Bootstrapping URI Notification,
+      Backhaul BSS Configuration, DPP Message / CCE Indication / Chirp
+      Value, BSS Configuration Report, BSSID, Service Prioritization
+      Rule, DSCP Mapping Table, BSS Configuration Request / Response,
+      Device Inventory, Agent List.
+- [x] R3 message types added (`0x801F`–`0x8043` selection: Proxied /
+      Direct Encap DPP, BSS Configuration Request / Response / Result,
+      Chirp Notification, 1905 Encap EAPOL, Reconfig Trigger, …).
+- [x] R3 regression fixture (`tests/fixtures/easymesh_r3.pcap`).
 - [ ] **R4 TLVs**: Wi-Fi 6 / 6E / 7 extensions, EHT capabilities,
       Affiliated AP / STA, MLD Configuration, AID, …
 - [ ] Every TLV carries a spec citation comment (`# spec: §17.2.x`)
