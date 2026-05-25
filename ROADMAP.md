@@ -142,10 +142,11 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
       Backhaul STA Radio Capabilities, AKM Suite Capabilities.
 - [x] R2 regression fixture (`tests/fixtures/easymesh_r2.pcap`,
       regenerable via `tests.fixtures.build_easymesh_r2_pcap`).
-- [ ] Profile-2 32-bit TLV length framing — deferred (no observed wild
-      device today needs it; standard 2-byte length covers all R2 TLVs
-      below 64 KB and we can add a Profile-2 framer when a real device
-      requires it).
+- [x] Profile-2 32-bit TLV length framing — opt-in via
+      `extended_length=True` on `RawTLV.to_bytes`/`from_bytes` and
+      `profile=2` on `CMDU.to_bytes`/`from_bytes`. Existing call sites
+      keep the standard 2-byte length by default; Profile-2 devices
+      switch the whole CMDU to 5-byte TLV headers as the spec requires.
 - [x] **R3 TLVs** (15 types, `0xCD`–`0xDF`) — covered in
       `src/ieee1905/core/tlvs/easymesh_r3.py`:
       1905 Encap DPP / EAPOL, DPP Bootstrapping URI Notification,

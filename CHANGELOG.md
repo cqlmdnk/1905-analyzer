@@ -6,6 +6,12 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Profile-2 32-bit TLV length framing** — `extended_length=True` on
+  `RawTLV.to_bytes`/`from_bytes` and `profile=2` on `CMDU.to_bytes`/
+  `from_bytes` switch the wire format to the Multi-AP v2.0 5-byte TLV
+  header. Defaults stay at 2-byte length so every existing caller
+  keeps working. 10 new tests cover round-trips in both modes and
+  cross-mode decode failures (120 total passing).
 - **DUT emulator ✓ core complete** (ADR-013) — `src/ieee1905/emulator/`:
   - `FakeAgent`: periodically emits Topology Discovery (5 s) and
     AP-Autoconfig Search (30 s); replies to inbound Topology Query,

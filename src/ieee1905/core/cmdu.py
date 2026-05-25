@@ -105,15 +105,26 @@ class CMDU:
     #: End-of-message TLV type per IEEE 1905.1 §17.2.1.
     END_OF_MESSAGE_TYPE: ClassVar[int] = 0x00
 
-    def to_bytes(self, *, append_end_of_message: bool = True) -> bytes:
+    def to_bytes(
+        self,
+        *,
+        append_end_of_message: bool = True,
+        extended_length: bool = False,
+        profile: int | None = None,
+    ) -> bytes:
+        """Serialize the CMDU. Pass ``profile=2`` (or ``extended_length=True``)
+        to emit Profile-2 framing (4-byte TLV length per Multi-AP v2.0)."""
+        ext = extended_length or (profile is not None and profile >= 2)
         parts: list[bytes] = [self.header.to_bytes()]
         seen_eom = False
         for tlv in self.tlvs:
-            parts.append(tlv.to_bytes())
+            parts.append(tlv.to_bytes(extended_length=ext))
             if tlv.tlv_type == self.END_OF_MESSAGE_TYPE:
                 seen_eom = True
         if append_end_of_message and not seen_eom:
-            parts.append(RawTLV(self.END_OF_MESSAGE_TYPE, b"").to_bytes())
+            parts.append(
+                RawTLV(self.END_OF_MESSAGE_TYPE, b"").to_bytes(extended_length=ext)
+            )
         return b"".join(parts)
 
     def typed_tlvs(self) -> Iterator[object]:
@@ -126,7 +137,17 @@ class CMDU:
             yield decode_raw(raw)
 
     @classmethod
-    def from_bytes(cls, data: bytes, *, require_end_of_message: bool = True) -> CMDU:
+    def from_bytes(
+        cls,
+        data: bytes,
+        *,
+        require_end_of_message: bool = True,
+        extended_length: bool = False,
+        profile: int | None = None,
+    ) -> CMDU:
+        """Decode a CMDU. Use ``profile=2`` (or ``extended_length=True``) for
+        Profile-2 wire format (4-byte TLV length per Multi-AP v2.0)."""
+        ext = extended_length or (profile is not None and profile >= 2)
         if len(data) < CMDU_HEADER_SIZE:
             raise CMDUParseError(
                 f"CMDU needs at least {CMDU_HEADER_SIZE} bytes, got {len(data)}"
@@ -138,7 +159,7 @@ class CMDU:
         seen_eom = False
         while offset < len(data):
             try:
-                tlv, consumed = RawTLV.parse_one(data, offset)
+                tlv, consumed = RawTLV.parse_one(data, offset, extended_length=ext)
             except TLVParseError as exc:
                 raise CMDUParseError(f"TLV at offset {offset}: {exc}") from exc
             tlvs.append(tlv)
