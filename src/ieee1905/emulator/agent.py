@@ -24,6 +24,8 @@ from ieee1905.core import CMDU, MessageType
 from ieee1905.core.tlvs import (
     AlMacAddress,
     ApCapability,
+    ApHeCapabilities,
+    ApHtCapabilities,
     ApMetrics,
     ApOperationalBss,
     ApRadioAdvancedCapabilities,
@@ -50,6 +52,7 @@ from ieee1905.core.tlvs import (
     OperationalBss,
     OperationalBssRadio,
     Profile2ApCapability,
+    RadioMetrics,
     SearchedRole,
     SearchedService,
     SupportedService,
@@ -100,6 +103,7 @@ class FakeAgent:
     ssid: bytes = b"emulator-mesh"
     topology_interval_s: float = 5.0
     autoconfig_interval_s: float = 30.0
+    metrics_interval_s: float = 30.0
     freq_band: int = 0x01  # 0=2.4GHz, 1=5GHz, 2=60GHz
 
     _ctx: EmulatorContext | None = None
@@ -139,6 +143,10 @@ class FakeAgent:
         assert self._ctx is not None
         next_topology = time.monotonic()
         next_autoconfig = time.monotonic()
+        # Periodic AP metrics emission only starts once we're onboarded
+        # — pre-onboarding, the controller has no BSS context for our
+        # MID and discards the metric report.
+        next_metrics = time.monotonic() + self.metrics_interval_s
         while not self._ctx.stop_event.is_set():
             now = time.monotonic()
             if now >= next_topology:
@@ -147,6 +155,9 @@ class FakeAgent:
             if now >= next_autoconfig:
                 self._send_autoconfig_search()
                 next_autoconfig = now + self.autoconfig_interval_s
+            if self._onboarded and now >= next_metrics:
+                self._send_ap_metrics_unsolicited()
+                next_metrics = now + self.metrics_interval_s
             self._ctx.stop_event.wait(timeout=0.5)
 
     def _send_topology_discovery(self) -> None:
@@ -289,6 +300,17 @@ class FakeAgent:
                         ),
                     ],
                 ),
+                # 802.11n/HT cap byte: 2x2 SS, SGI-20+40, HT-40. Bits per
+                # Multi-AP v1.0 Table 17-6.
+                ApHtCapabilities(radio_id=self.radio_id, flags=0x5E),
+                # 802.11ax/HE: minimal MCS map (2x2 1024-QAM = 0xFFFA repeated
+                # for 80/160/80+80). Flags advertise 2x2 SS, no 160 MHz,
+                # SU/MU beamformer, UL OFDMA, DL OFDMA.
+                ApHeCapabilities(
+                    radio_id=self.radio_id,
+                    supported_he_mcs=b"\xfa\xff",
+                    flags=0x40F8,
+                ),
                 ChannelScanCapabilities(
                     radios=[
                         ChannelScanCapabilityRadio(
@@ -320,21 +342,60 @@ class FakeAgent:
         )
         send_frame(self._ctx, cmdu_bytes, dst=dst)
 
+    def _ap_metrics_tlvs(self) -> list[object]:
+        """Build the metric TLV list common to solicited and unsolicited reports.
+
+        Multi-AP v2.0 §17.1.14: at minimum one ``ApMetrics`` per BSS.
+        We also include ``RadioMetrics`` (R2 §17.2.60) because most
+        controllers reject reports that lack per-radio utilization.
+        """
+        return [
+            ApMetrics(
+                bssid=self.bssid,
+                channel_utilization=20,
+                num_associated_stas=0,
+                esp_info=b"\x80\x00\x10\x20",
+            ),
+            RadioMetrics(
+                radio_id=self.radio_id,
+                # All values dBm/percentage. Noise floor -75 dBm encoded
+                # as 220 - 75 = 145 + 35? Actually per spec, noise is u8
+                # in dBm units offset by 220 (so 200 == -20 dBm worst).
+                noise=180,
+                transmit_utilization=15,
+                receive_utilization=10,
+                receive_other_utilization=5,
+            ),
+        ]
+
     def _reply_ap_metrics_response(self, dst: bytes, query: CMDU) -> None:
         assert self._ctx is not None
         cmdu_bytes = build_cmdu(
             message_type=MessageType.EM_AP_METRICS_RESPONSE.value,
             message_id=query.header.message_id,
-            typed_tlvs=[
-                ApMetrics(
-                    bssid=self.bssid,
-                    channel_utilization=20,
-                    num_associated_stas=0,
-                    esp_info=b"\x80\x00\x10\x20",
-                ),
-            ],
+            typed_tlvs=self._ap_metrics_tlvs(),
         )
         send_frame(self._ctx, cmdu_bytes, dst=dst)
+
+    def _send_ap_metrics_unsolicited(self) -> None:
+        """Push an unsolicited EM_AP_METRICS_RESPONSE to the multicast AL.
+
+        Multi-AP v2.0 §17.1.13 lets agents report metrics on their own
+        cadence (``MetricCollectionInterval`` TLV in the capability
+        report) so the controller can populate dashboards even without
+        polling. The emulator does this once it's onboarded so the
+        controller's per-agent metrics view stays fresh.
+        """
+        assert self._ctx is not None
+        cmdu_bytes = build_cmdu(
+            message_type=MessageType.EM_AP_METRICS_RESPONSE.value,
+            message_id=self._ctx.next_mid(),
+            typed_tlvs=self._ap_metrics_tlvs(),
+        )
+        try:
+            send_frame(self._ctx, cmdu_bytes)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("unsolicited AP metrics send failed: %s", exc)
 
     # ---- WSC M1 / M2 onboarding --------------------------------------------
 

@@ -243,3 +243,69 @@ def test_agent_replies_channel_selection_request_with_two_cmdus() -> None:
     assert out[0].header.message_id == 0x0106  # paired with request MID
     assert out[1].header.message_type == MessageType.EM_OPERATING_CHANNEL_REPORT.value
     assert out[1].header.message_id != 0x0106  # unsolicited follow-up gets fresh MID
+
+
+def test_ap_capability_report_includes_ht_and_he_caps() -> None:
+    # type=0x8001 EM_AP_CAPABILITY_QUERY
+    out = _drive_agent_with("0000800101070080")
+    assert len(out) == 1
+    types = {t.tlv_type for t in out[0].tlvs}
+    assert 0x86 in types  # ApHtCapabilities
+    assert 0x88 in types  # ApHeCapabilities
+
+
+def test_ap_metrics_response_includes_radio_metrics() -> None:
+    # type=0x800B EM_AP_METRICS_QUERY
+    out = _drive_agent_with("0000800b01080080")
+    assert len(out) == 1
+    assert out[0].header.message_type == MessageType.EM_AP_METRICS_RESPONSE.value
+    types = {t.tlv_type for t in out[0].tlvs}
+    assert 0x94 in types  # ApMetrics
+    assert 0xC6 in types  # RadioMetrics
+
+
+def test_unsolicited_ap_metrics_carries_metrics_tlvs() -> None:
+    agent = _new_agent()
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        frame = EthernetFrame(
+            dst=dst or b"\x01\x80\xc2\x00\x00\x13",
+            src=ctx.al_mac,
+            ethertype=0x893A,
+            payload=cmdu_bytes,
+        ).to_bytes()
+        captured.append(frame)
+
+    with patch("ieee1905.emulator.agent.send_frame", side_effect=fake_send):
+        agent._send_ap_metrics_unsolicited()
+
+    assert len(captured) == 1
+    cmdu = _extract_cmdu_from_send(captured[0])
+    assert cmdu.header.message_type == MessageType.EM_AP_METRICS_RESPONSE.value
+    types = {t.tlv_type for t in cmdu.tlvs}
+    assert 0x94 in types and 0xC6 in types  # ApMetrics + RadioMetrics
+
+
+def test_heartbeat_emits_metrics_only_after_onboarding() -> None:
+    """Periodic metrics emission must be gated by the WSC-onboarded flag.
+
+    Pre-onboarding the controller has no BSS context for our agent and
+    drops unsolicited metric reports — emitting before onboarding just
+    spams the wire.
+    """
+    agent = _new_agent()
+    assert agent._onboarded is False
+    # Simulate post-onboarding state.
+    agent._onboarded = True
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append(cmdu_bytes)
+
+    with patch("ieee1905.emulator.agent.send_frame", side_effect=fake_send):
+        agent._send_ap_metrics_unsolicited()
+    assert len(captured) == 1
+    assert CMDU.from_bytes(captured[0]).header.message_type == (
+        MessageType.EM_AP_METRICS_RESPONSE.value
+    )
