@@ -105,9 +105,9 @@ def test_stale_groups_are_evicted() -> None:
     # on a different MID keeps the call out of the single-fragment fast path,
     # so the only effect we care about is the eviction of MID 4.
     rsm.push(SRC_B, _make_fragment(message_id=5, fragment_id=0, last=False, payload=b"\x00"))
-    assert (SRC_A, 4) not in rsm._groups  # noqa: SLF001 — internal state check is the point
+    assert (SRC_A, 4) not in rsm._groups
     # The brand-new SRC_B/MID=5 group is still pending (not stale yet).
-    assert (SRC_B, 5) in rsm._groups  # noqa: SLF001
+    assert (SRC_B, 5) in rsm._groups
 
 
 def test_pre_parse_with_real_cmdu_bytes() -> None:
