@@ -246,6 +246,121 @@ def inject_cmd(
     console.print(f"[green]injected {repeat} frame(s) on {interface}[/]")
 
 
+@cli.command("capture")
+@click.argument("interface")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False),
+    help="Also write captured frames to this PCAP file.",
+)
+@click.option(
+    "--count",
+    "-c",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Stop after N 1905 frames. 0 = no limit.",
+)
+@click.option(
+    "--duration",
+    "-d",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Stop after N seconds. 0 = no limit.",
+)
+@click.option(
+    "--all-traffic",
+    is_flag=True,
+    help="Show non-1905 frames too (default: only ether proto 0x893a).",
+)
+def capture_cmd(
+    interface: str,
+    output: str | None,
+    count: int,
+    duration: float,
+    all_traffic: bool,
+) -> None:
+    """Live-capture frames from INTERFACE. Ctrl-C to stop.
+
+    By default lists only IEEE 1905 frames (one row per CMDU). Pass
+    ``--output`` to also save the raw frames to a PCAP for later
+    `ieee1905 read` / `ieee1905 inspect`.
+    """
+    import threading
+    import time
+
+    from ieee1905.core import CMDU, MessageType
+    from ieee1905.core.cmdu import CMDUParseError
+    from ieee1905.io.backend import ETHERTYPE_IEEE1905, get_default_backend
+    from ieee1905.io.ethernet import EthernetFrame, EthernetParseError
+
+    writer = None
+    if output:
+        from scapy.layers.l2 import Ether
+        from scapy.packet import Raw
+        from scapy.utils import PcapWriter
+
+        writer = PcapWriter(output, append=False, sync=True)
+
+    stop = threading.Event()
+    started = time.monotonic()
+    frames_shown = 0
+    console.print(
+        f"[green]Capturing on {interface}[/]"
+        f"{' → ' + output if output else ''}"
+        f" (count={count or '∞'}, duration={duration or '∞'}s). Ctrl-C to stop."
+    )
+
+    def on_frame(raw: bytes, ts: float) -> None:
+        nonlocal frames_shown
+        try:
+            eth = EthernetFrame.parse(raw)
+        except EthernetParseError:
+            return
+        if not all_traffic and eth.ethertype != ETHERTYPE_IEEE1905:
+            return
+
+        msg = "-"
+        tlv_n = 0
+        note = ""
+        if eth.ethertype == ETHERTYPE_IEEE1905:
+            try:
+                cmdu = CMDU.from_bytes(eth.payload)
+                msg = MessageType.describe(cmdu.header.message_type)
+                tlv_n = len(cmdu.tlvs)
+            except CMDUParseError as exc:
+                note = f"malformed: {exc}"
+
+        console.print(
+            f"  [cyan]{frames_shown:>5}[/] ts={ts:.3f} "
+            f"{eth.src.hex(':')} → {eth.dst.hex(':')} "
+            f"type=0x{eth.ethertype:04x} {msg} tlvs={tlv_n} {note}"
+        )
+        if writer is not None:
+            # Re-build a Scapy Ether so PcapWriter sets the right timestamp.
+            scapy_pkt = Ether(src=eth.src, dst=eth.dst, type=eth.ethertype) / Raw(load=eth.payload)
+            scapy_pkt.time = ts
+            writer.write(scapy_pkt)
+        frames_shown += 1
+        if count and frames_shown >= count:
+            stop.set()
+        if duration and (time.monotonic() - started) >= duration:
+            stop.set()
+
+    backend = get_default_backend()
+    try:
+        with backend.open_live(interface, promiscuous=True) as live:
+            live.sniff(on_frame, stop_event=stop)
+    except KeyboardInterrupt:
+        stop.set()
+    finally:
+        if writer is not None:
+            writer.close()
+    console.print(f"[green]done[/]: captured {frames_shown} frame(s)")
+
+
 @cli.command("templates")
 @click.option(
     "--dir",
