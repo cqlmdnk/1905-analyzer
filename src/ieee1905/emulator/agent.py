@@ -29,16 +29,23 @@ from ieee1905.core.tlvs import (
     ApRadioAdvancedCapabilities,
     ApRadioBasicCapabilities,
     AutoconfigFreqBand,
+    BackhaulStaRadioCapabilities,
     CacCapabilities,
     CacRadioCapability,
+    ChannelPreference,
+    ChannelPreferenceOpClass,
     ChannelScanCapabilities,
     ChannelScanCapabilityOpClass,
     ChannelScanCapabilityRadio,
+    ChannelSelectionResponse,
     DeviceInformation,
+    LinkMetricResultCode,
     LocalInterface,
     MacAddress,
     MetricCollectionInterval,
     MultiApProfile,
+    OperatingChannelOpClass,
+    OperatingChannelReport,
     OperatingClassCapability,
     OperationalBss,
     OperationalBssRadio,
@@ -192,6 +199,8 @@ class FakeAgent:
         mtype = cmdu.header.message_type
         if mtype == MessageType.TOPOLOGY_QUERY.value:
             self._reply_topology_response(src, cmdu)
+        elif mtype == MessageType.LINK_METRIC_QUERY.value:
+            self._reply_link_metric_response(src, cmdu)
         elif mtype == MessageType.AP_AUTOCONFIGURATION_RESPONSE.value:
             self._on_autoconfig_response(src, cmdu)
         elif mtype == MessageType.AP_AUTOCONFIGURATION_RENEW.value:
@@ -208,6 +217,19 @@ class FakeAgent:
             self._reply_ap_capability_report(src, cmdu)
         elif mtype == MessageType.EM_AP_METRICS_QUERY.value:
             self._reply_ap_metrics_response(src, cmdu)
+        elif mtype == MessageType.EM_MULTI_AP_POLICY_CONFIG_REQUEST.value:
+            # Spec requires a 1905 ACK acknowledging policy intake.
+            self._send_ack(src, cmdu.header.message_id)
+        elif mtype == MessageType.EM_CHANNEL_PREFERENCE_QUERY.value:
+            self._reply_channel_preference_report(src, cmdu)
+        elif mtype == MessageType.EM_CHANNEL_SELECTION_REQUEST.value:
+            self._reply_channel_selection(src, cmdu)
+        elif mtype == MessageType.EM_HIGHER_LAYER_DATA.value:
+            # We don't terminate higher-layer protocols (DPP, key
+            # rotation, etc.) — just ACK so the controller stops retrying.
+            self._send_ack(src, cmdu.header.message_id)
+        elif mtype == MessageType.EM_BACKHAUL_STA_CAPABILITY_QUERY.value:
+            self._reply_backhaul_sta_capability_report(src, cmdu)
 
     def _reply_topology_response(self, dst: bytes, query: CMDU) -> None:
         assert self._ctx is not None
@@ -365,50 +387,62 @@ class FakeAgent:
         if session is None:
             logger.debug("WSC frame received but no enrollee session is active")
             return
-        wsc_payload: bytes | None = None
-        for tlv in cmdu.tlvs:
-            if tlv.tlv_type == WscFrame.TLV_TYPE:
-                wsc_payload = tlv.payload
-                break
-        if wsc_payload is None:
+        # A controller may stack multiple WSC TLVs in one AP-Autoconfig WSC
+        # CMDU — one M2 per provisioned BSS.
+        wsc_payloads = [tlv.payload for tlv in cmdu.tlvs if tlv.tlv_type == WscFrame.TLV_TYPE]
+        if not wsc_payloads:
             return
 
+        any_success = False
+        for wsc_payload in wsc_payloads:
+            if self._process_m2(session, wsc_payload):
+                any_success = True
+
+        if any_success:
+            self._onboarded = True
+
+    def _process_m2(self, session: WscEnrolleeSession, wsc_payload: bytes) -> bool:
         try:
             attrs = dict(parse_attributes(wsc_payload))
         except ValueError as exc:
             logger.warning("WSC attributes malformed: %s", exc)
-            return
+            return False
 
         message_type = attrs.get(ATTR_MESSAGE_TYPE)
         if not message_type or message_type[0] != WSC_MSG_M2:
             logger.debug("WSC frame is not M2 (type=%r) — ignoring", message_type)
-            return
+            return False
 
         r_pub = attrs.get(ATTR_PUBLIC_KEY)
         r_nonce = attrs.get(ATTR_REGISTRAR_NONCE)
         enc = attrs.get(ATTR_ENCRYPTED_SETTINGS)
         if not (r_pub and r_nonce and enc):
             logger.warning("WSC M2 missing required attribute(s)")
-            return
+            return False
 
         keys = derive_keys(session, r_pub, r_nonce)
         if not verify_authenticator(keys, session.m1_bytes, wsc_payload):
             logger.warning("WSC M2 Authenticator mismatch — dropping")
-            return
+            return False
 
         try:
             inner = decrypt_encrypted_settings(keys, enc)
         except ValueError as exc:
             logger.warning("WSC M2 Encrypted Settings rejected: %s", exc)
-            return
+            return False
 
         new_creds = parse_credentials(inner)
         if not new_creds:
-            logger.warning("WSC M2 contained no BSS credentials")
-            return
+            # Surface the inner attribute layout so the user can see what
+            # the controller actually sent (and we can fix the parser).
+            seen = sorted({aid for aid, _ in parse_attributes(inner)})
+            logger.warning(
+                "WSC M2 contained no BSS credentials — inner attrs: %s",
+                ", ".join(f"0x{a:04x}" for a in seen),
+            )
+            return False
 
         self._bss_credentials.extend(new_creds)
-        self._onboarded = True
         for cred in new_creds:
             logger.info(
                 "WSC M2 BSS configured: ssid=%r auth=0x%04x encr=0x%04x",
@@ -416,3 +450,120 @@ class FakeAgent:
                 cred.auth_type,
                 cred.encr_type,
             )
+        return True
+
+    # ---- Post-onboarding query/response handlers ---------------------------
+
+    def _send_ack(self, dst: bytes, mid: int) -> None:
+        """Emit a Multi-AP 1905 ACK CMDU (no TLVs) for ``mid``."""
+        assert self._ctx is not None
+        cmdu_bytes = build_cmdu(
+            message_type=MessageType.EM_ACK.value,
+            message_id=mid,
+            typed_tlvs=[],
+        )
+        try:
+            send_frame(self._ctx, cmdu_bytes, dst=dst)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("1905 ACK send failed: %s", exc)
+
+    def _reply_link_metric_response(self, dst: bytes, query: CMDU) -> None:
+        """Respond to LINK_METRIC_QUERY.
+
+        IEEE 1905.1 §6.3.6: the responder includes one Transmitter and
+        one Receiver link metric TLV per neighbor it has. We have no
+        peers from the agent's own discovery table, so emit a single
+        ``LinkMetricResultCode`` with the "invalid neighbor" code — the
+        spec-sanctioned way to say "I have no link metrics to report."
+        """
+        assert self._ctx is not None
+        cmdu_bytes = build_cmdu(
+            message_type=MessageType.LINK_METRIC_RESPONSE.value,
+            message_id=query.header.message_id,
+            typed_tlvs=[LinkMetricResultCode(result_code=0x00)],
+        )
+        send_frame(self._ctx, cmdu_bytes, dst=dst)
+
+    def _reply_backhaul_sta_capability_report(self, dst: bytes, query: CMDU) -> None:
+        """Respond to BACKHAUL_STA_CAPABILITY_QUERY (Multi-AP v2.0 §17.1.32).
+
+        The emulator advertises no backhaul STA — flags=0x00 and no
+        backhaul STA MAC. Real agents would set bit 7 and append their
+        backhaul-STA MAC.
+        """
+        assert self._ctx is not None
+        cmdu_bytes = build_cmdu(
+            message_type=MessageType.EM_BACKHAUL_STA_CAPABILITY_REPORT.value,
+            message_id=query.header.message_id,
+            typed_tlvs=[
+                BackhaulStaRadioCapabilities(
+                    radio_id=self.radio_id,
+                    flags=0x00,
+                    backhaul_sta_mac=None,
+                ),
+            ],
+        )
+        send_frame(self._ctx, cmdu_bytes, dst=dst)
+
+    def _reply_channel_preference_report(self, dst: bytes, query: CMDU) -> None:
+        """Respond to CHANNEL_PREFERENCE_QUERY with an "all preferred" report.
+
+        Multi-AP v1.0 §17.1.10: at minimum a per-radio Channel Preference
+        TLV is required. An empty operating-class list means "no channel
+        is non-operable for me", which lets the controller pick any
+        spec-default channel.
+        """
+        assert self._ctx is not None
+        cmdu_bytes = build_cmdu(
+            message_type=MessageType.EM_CHANNEL_PREFERENCE_REPORT.value,
+            message_id=query.header.message_id,
+            typed_tlvs=[
+                ChannelPreference(
+                    radio_id=self.radio_id,
+                    operating_classes=[
+                        # Op class 81 (2.4 GHz 20 MHz, ch 1-13). Empty
+                        # channel list = "all channels in this op class
+                        # carry the same preference".
+                        ChannelPreferenceOpClass(op_class=81, channels=[], preference=0xF0),
+                    ],
+                ),
+            ],
+        )
+        send_frame(self._ctx, cmdu_bytes, dst=dst)
+
+    def _reply_channel_selection(self, dst: bytes, query: CMDU) -> None:
+        """Respond to CHANNEL_SELECTION_REQUEST.
+
+        Two CMDUs go back per Multi-AP v1.0 §17.1.11+§17.1.12:
+
+        1. CHANNEL_SELECTION_RESPONSE acknowledging the request (one
+           ChannelSelectionResponse TLV per radio, response_code=0).
+        2. OPERATING_CHANNEL_REPORT confirming the channel actually in use.
+        """
+        assert self._ctx is not None
+        # 1) selection response
+        resp_bytes = build_cmdu(
+            message_type=MessageType.EM_CHANNEL_SELECTION_RESPONSE.value,
+            message_id=query.header.message_id,
+            typed_tlvs=[
+                ChannelSelectionResponse(radio_id=self.radio_id, response_code=0x00),
+            ],
+        )
+        send_frame(self._ctx, resp_bytes, dst=dst)
+
+        # 2) operating channel report (separate MID — it's an unsolicited
+        # post-selection notification, not the request's reply pair).
+        report_bytes = build_cmdu(
+            message_type=MessageType.EM_OPERATING_CHANNEL_REPORT.value,
+            message_id=self._ctx.next_mid(),
+            typed_tlvs=[
+                OperatingChannelReport(
+                    radio_id=self.radio_id,
+                    operating_classes=[
+                        OperatingChannelOpClass(op_class=81, channel=6),
+                    ],
+                    current_transmit_power_dbm=20,
+                ),
+            ],
+        )
+        send_frame(self._ctx, report_bytes, dst=dst)

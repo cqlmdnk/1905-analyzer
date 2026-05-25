@@ -65,22 +65,27 @@ class MessageType(IntEnum):
     EM_BACKHAUL_STEERING_RESPONSE = 0x801A
 
     # ---- Wi-Fi EasyMesh R2 message types -----------------------------------
+    # Values verified against strict R3-compliant controllers ieee_1905_1::eMessageType. R2 and R3
+    # extensions are packed densely in the 0x801B-0x8031 range; the previous
+    # ordering had off-by-one shifts that put BackhaulSTA Capability Query
+    # at 0x8026 (actually Tunnelled) and Report at 0x8027 (actually Query).
     EM_CHANNEL_SCAN_REQUEST = 0x801B
     EM_CHANNEL_SCAN_REPORT = 0x801C
     EM_CAC_REQUEST = 0x8020
     EM_CAC_TERMINATION = 0x8021
     EM_CLIENT_DISASSOCIATION_STATS = 0x8022
-    EM_ERROR_RESPONSE = 0x8023
-    EM_ASSOCIATION_STATUS_NOTIFICATION = 0x8024
-    EM_TUNNELED = 0x8025
-    EM_BACKHAUL_STA_CAPABILITY_QUERY = 0x8026
-    EM_BACKHAUL_STA_CAPABILITY_REPORT = 0x8027
+    EM_SERVICE_PRIORITIZATION_REQUEST = 0x8023
+    EM_ERROR_RESPONSE = 0x8024
+    EM_ASSOCIATION_STATUS_NOTIFICATION = 0x8025
+    EM_TUNNELED = 0x8026
+    EM_BACKHAUL_STA_CAPABILITY_QUERY = 0x8027
+    EM_BACKHAUL_STA_CAPABILITY_REPORT = 0x8028
     EM_FAILED_CONNECTION = 0x8033
 
     # ---- Wi-Fi EasyMesh R3 message types -----------------------------------
-    EM_DPP_CCE_INDICATION = 0x801F
-    EM_1905_REKEY_REQUEST = 0x8028
-    EM_1905_DECRYPTION_FAILURE = 0x8029
+    EM_DPP_CCE_INDICATION = 0x801D
+    EM_1905_REKEY_REQUEST = 0x801E
+    EM_1905_DECRYPTION_FAILURE = 0x801F
     EM_CAC_STATUS_REPORT = 0x8032
     EM_PROXIED_ENCAP_DPP = 0x8034
     EM_DIRECT_ENCAP_DPP = 0x8035

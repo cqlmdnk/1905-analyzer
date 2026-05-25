@@ -281,35 +281,54 @@ class BssCredential:
     mac_address: bytes
 
 
+def _credential_from_attr_stream(stream: bytes) -> BssCredential | None:
+    """Extract a single BssCredential from a flat WPS attribute stream.
+
+    Returns ``None`` if the stream has neither an SSID nor a Network Key
+    (i.e. it isn't a credential body).
+    """
+    ssid = b""
+    auth = encr = 0
+    key = mac = b""
+    for sub_id, sub_val in parse_attributes(stream):
+        if sub_id == ATTR_SSID:
+            ssid = sub_val
+        elif sub_id == ATTR_AUTH_TYPE:
+            auth = int.from_bytes(sub_val, "big")
+        elif sub_id == ATTR_ENCR_TYPE:
+            encr = int.from_bytes(sub_val, "big")
+        elif sub_id == ATTR_NETWORK_KEY:
+            key = sub_val
+        elif sub_id == ATTR_MAC_ADDRESS:
+            mac = sub_val
+    if not (ssid or key):
+        return None
+    return BssCredential(
+        ssid=ssid,
+        auth_type=auth,
+        encr_type=encr,
+        network_key=key,
+        mac_address=mac,
+    )
+
+
 def parse_credentials(inner: bytes) -> list[BssCredential]:
-    """Extract AP credentials from the decrypted Encrypted Settings."""
+    """Extract AP credentials from the decrypted Encrypted Settings.
+
+    The on-wire shape varies: a strict WPS M2 wraps each credential in
+    attribute 0x100E (nested attribute stream); Multi-AP M2's commonly
+    place the credential attributes directly at the top level of
+    Encrypted Settings. Try the nested form first, fall back to a flat
+    parse if no 0x100E was present.
+    """
     creds: list[BssCredential] = []
     for attr_id, val in parse_attributes(inner):
-        # M2 wraps each Credential in attribute 0x100E whose value is itself
-        # an attribute stream (WPS v2.0 §11).
         if attr_id != 0x100E:
             continue
-        ssid = b""
-        auth = encr = 0
-        key = mac = b""
-        for sub_id, sub_val in parse_attributes(val):
-            if sub_id == ATTR_SSID:
-                ssid = sub_val
-            elif sub_id == ATTR_AUTH_TYPE:
-                auth = int.from_bytes(sub_val, "big")
-            elif sub_id == ATTR_ENCR_TYPE:
-                encr = int.from_bytes(sub_val, "big")
-            elif sub_id == ATTR_NETWORK_KEY:
-                key = sub_val
-            elif sub_id == ATTR_MAC_ADDRESS:
-                mac = sub_val
-        creds.append(
-            BssCredential(
-                ssid=ssid,
-                auth_type=auth,
-                encr_type=encr,
-                network_key=key,
-                mac_address=mac,
-            )
-        )
-    return creds
+        c = _credential_from_attr_stream(val)
+        if c is not None:
+            creds.append(c)
+    if creds:
+        return creds
+    flat = _credential_from_attr_stream(inner)
+    return [flat] if flat is not None else []

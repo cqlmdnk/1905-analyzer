@@ -170,3 +170,76 @@ def test_cli_emulator_group_help() -> None:
     assert result.exit_code == 0, result.output
     assert "agent" in result.output
     assert "controller" in result.output
+
+
+def _drive_agent_with(query_hex: str) -> list[CMDU]:
+    """Helper: feed ``query_hex`` to the agent, return all CMDUs it sent back."""
+    agent = _new_agent()
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        frame = EthernetFrame(
+            dst=dst or b"\x01\x80\xc2\x00\x00\x13",
+            src=ctx.al_mac,
+            ethertype=0x893A,
+            payload=cmdu_bytes,
+        ).to_bytes()
+        captured.append(frame)
+
+    with patch("ieee1905.emulator.agent.send_frame", side_effect=fake_send):
+        query = CMDU.from_bytes(bytes.fromhex(query_hex) + b"\x00\x00\x00")
+        agent._on_cmdu(CONTROLLER_MAC, query)
+    return [_extract_cmdu_from_send(f) for f in captured]
+
+
+def test_agent_replies_link_metric_query_with_result_code() -> None:
+    # type=0x0005 LINK_METRIC_QUERY, mid=0x0101, flags=0x80 (last, no relay)
+    out = _drive_agent_with("0000000501010080")
+    assert len(out) == 1
+    assert out[0].header.message_type == MessageType.LINK_METRIC_RESPONSE.value
+    types = {t.tlv_type for t in out[0].tlvs}
+    assert 0x0C in types  # LinkMetricResultCode
+
+
+def test_agent_acks_higher_layer_data() -> None:
+    # type=0x8018 EM_HIGHER_LAYER_DATA
+    out = _drive_agent_with("0000801801020080")
+    assert len(out) == 1
+    assert out[0].header.message_type == MessageType.EM_ACK.value
+    assert out[0].header.message_id == 0x0102
+
+
+def test_agent_acks_multi_ap_policy_config_request() -> None:
+    # type=0x8003 EM_MULTI_AP_POLICY_CONFIG_REQUEST
+    out = _drive_agent_with("0000800301030080")
+    assert len(out) == 1
+    assert out[0].header.message_type == MessageType.EM_ACK.value
+    assert out[0].header.message_id == 0x0103
+
+
+def test_agent_replies_backhaul_sta_capability_query() -> None:
+    # type=0x8027 EM_BACKHAUL_STA_CAPABILITY_QUERY (canonical strict R3-compliant controllers value)
+    out = _drive_agent_with("0000802701040080")
+    assert len(out) == 1
+    assert out[0].header.message_type == MessageType.EM_BACKHAUL_STA_CAPABILITY_REPORT.value
+    types = {t.tlv_type for t in out[0].tlvs}
+    assert 0xCB in types  # BackhaulStaRadioCapabilities
+
+
+def test_agent_replies_channel_preference_query() -> None:
+    # type=0x8004 EM_CHANNEL_PREFERENCE_QUERY
+    out = _drive_agent_with("0000800401050080")
+    assert len(out) == 1
+    assert out[0].header.message_type == MessageType.EM_CHANNEL_PREFERENCE_REPORT.value
+    types = {t.tlv_type for t in out[0].tlvs}
+    assert 0x8B in types  # ChannelPreference
+
+
+def test_agent_replies_channel_selection_request_with_two_cmdus() -> None:
+    # type=0x8006 EM_CHANNEL_SELECTION_REQUEST
+    out = _drive_agent_with("0000800601060080")
+    assert len(out) == 2
+    assert out[0].header.message_type == MessageType.EM_CHANNEL_SELECTION_RESPONSE.value
+    assert out[0].header.message_id == 0x0106  # paired with request MID
+    assert out[1].header.message_type == MessageType.EM_OPERATING_CHANNEL_REPORT.value
+    assert out[1].header.message_id != 0x0106  # unsolicited follow-up gets fresh MID
