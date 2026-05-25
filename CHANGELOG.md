@@ -6,6 +6,21 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Phase 2 (R1 slice) complete** — EasyMesh R1 TLV layer:
+  - 36 R1 TLVs (`0x80`–`0xA3`) implemented in
+    `src/ieee1905/core/tlvs/easymesh_r1.py` (service, identification,
+    operational BSS, capability, channel, client, metric, steering,
+    misc). Bit-packed capability flags (HT/VHT/HE/AP Capability)
+    exposed via named accessors.
+  - 27 R1 message types (`0x8000`–`0x801A`) added to `MessageType`.
+  - Sub-record dataclasses (BSS, operating-class capability, link
+    entries, steering targets, etc.) round-trip cleanly.
+  - Regression fixture: `tests/fixtures/easymesh_r1.pcap` (36 frames,
+    ~2.2 KB), regenerable via `tests.fixtures.build_easymesh_r1_pcap`.
+  - 10 new tests (78 total passing): per-TLV round-trip, fixture wire
+    lock, typed decode, accessor sanity checks, optional-field
+    variant length (Steering BTM Report), Unknown-TLV fallback in EM
+    message context, coverage gate for all `EM_*` types.
 - **Phase 1 complete** — 1905.1 core codec:
   - `CMDU` / `CMDUHeader` encode/decode with fragment flags
   - `RawTLV` wire-level TLV parser + `decode_raw` registry dispatch

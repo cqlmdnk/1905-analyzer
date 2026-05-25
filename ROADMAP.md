@@ -111,11 +111,24 @@ Primary platform: Ubuntu 22.04+ LTS (cross-platform CI: macOS + Windows)
 
 ## Phase 2 — EasyMesh R1–R4 TLV layer
 
-- [ ] **R1 TLVs** (~50 new types): SupportedService, AP Operational BSS,
-      Associated Clients, AP Capability, AP Radio Capability,
-      AP HT / VHT / HE Capabilities, Channel Preference / Selection,
-      Steering Policy, Steering Request, Client Association Control,
-      Client Capability Report, Backhaul Steering, …
+- [x] **R1 TLVs** (36 types, `0x80`–`0xA3`) — covered in
+      `src/ieee1905/core/tlvs/easymesh_r1.py`:
+      SupportedService / SearchedService, AP Radio Identifier,
+      AP Operational BSS, Associated Clients, AP Radio Basic Capabilities,
+      AP HT / VHT / HE Capabilities, Steering Policy, Metric Reporting
+      Policy, Channel Preference, Radio Operation Restriction,
+      Transmit Power Limit, Channel Selection Response, Operating Channel
+      Report, Client Info, Client Capability Report, Client Association
+      Event, AP Metric Query, AP Metrics, STA MAC Address Type,
+      Associated STA Link Metrics, Unassociated STA Link Metrics
+      Query / Response, Beacon Metrics Query / Response, Steering Request,
+      Steering BTM Report, Client Association Control Request,
+      Backhaul Steering Request / Response, Higher Layer Data, AP
+      Capability, Associated STA Traffic Stats, Error Code.
+- [x] R1 message types (27 types, `0x8000`–`0x801A`) added to
+      `MessageType`.
+- [x] R1 regression fixture (`tests/fixtures/easymesh_r1.pcap`,
+      regenerable via `tests.fixtures.build_easymesh_r1_pcap`).
 - [ ] **R2 TLVs**: Channel Scan capabilities / request / report,
       Profile-2 AP Capability, Default 802.1Q settings, Traffic
       Separation Policy, Backhaul STA Radio Capabilities, AKM Suite
