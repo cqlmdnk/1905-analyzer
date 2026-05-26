@@ -1,0 +1,25 @@
+# associate_client + disassociate_client should each emit exactly one
+# Topology Notification carrying a ClientAssociationEvent TLV. The
+# associated bit (bit 7 of event byte) flips between the two paths.
+name: agent_client_association_event
+description: STA assoc / dissoc events emit Topology Notification CMDUs
+target: agent
+steps:
+  - call:
+      method: associate_client
+      args: ["aabbccddeeff"]
+  - expect:
+      emit_count: 1
+      emits:
+        - message_type: TOPOLOGY_NOTIFICATION
+          tlv_types: [0x01, 0x92]
+      state:
+        _onboarded: false
+  - call:
+      method: disassociate_client
+      args: ["aabbccddeeff"]
+  - expect:
+      emit_count: 1
+      emits:
+        - message_type: TOPOLOGY_NOTIFICATION
+          tlv_types: [0x01, 0x92]

@@ -1,0 +1,27 @@
+# Inject a TOPOLOGY_QUERY into a fresh agent; expect a TOPOLOGY_RESPONSE
+# carrying DeviceInformation, SupportedService, ApOperationalBss and
+# MultiApProfile (the four mandatory TLVs per Multi-AP v1.0 §7.2.3 +
+# v2.0 §17.2). The standalone AL MAC TLV (0x01) must NOT appear — it
+# belongs to Topology Discovery, not Topology Response.
+name: agent_topology_query_response
+description: Agent answers a Topology Query with the spec-mandated TLV set
+target: agent
+setup:
+  al_mac: 02:00:de:ad:be:ef
+  radio_id: 02:00:de:ad:be:01
+  bssid: 02:00:de:ad:be:02
+  ssid: emulator-mesh
+  freq_band: 0
+steps:
+  - inject:
+      src_mac: 02:00:cc:cc:cc:01
+      # CMDU header: ver=00 rsv=00 type=0x0002 mid=0x0042 frag=0 flags=0x80
+      # + end-of-message TLV (0x00 0x0000)
+      cmdu_hex: "0000000200420080000000"
+  - expect:
+      emit_count: 1
+      emits:
+        - message_type: TOPOLOGY_RESPONSE
+          message_id: 0x0042
+          tlv_types: [0x03, 0x80, 0x83, 0xB3]
+          not_tlv_types: [0x01]

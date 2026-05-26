@@ -1,0 +1,17 @@
+# EM_HIGHER_LAYER_DATA (0x8018) is in the agent's ACK-only request set.
+# Multi-AP v1.0 §17.1.18: the agent must respond with a bare 1905 ACK
+# whose MID echoes the inbound HLDATA's MID, so the controller's retry
+# timer stops firing.
+name: agent_higher_layer_data_ack
+description: Agent ACKs inbound HIGHER_LAYER_DATA with the original MID
+target: agent
+steps:
+  - inject:
+      src_mac: 02:00:cc:cc:cc:01
+      # type=0x8018 mid=0x0102 flags=0x80 + EoM
+      cmdu_hex: "0000801801020080000000"
+  - expect:
+      emit_count: 1
+      emits:
+        - message_type: EM_ACK
+          message_id: 0x0102

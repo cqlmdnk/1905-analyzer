@@ -1,0 +1,22 @@
+# If we mark the agent as onboarded by hand, then deliver an
+# AP-Autoconfig Renew CMDU, the agent must reset its onboarded flag,
+# wipe any cached BSS credentials, and emit a fresh AP-Autoconfig
+# Search to restart provisioning (the only spec-sanctioned restart
+# trigger per IEEE 1905.1 §6.3.10).
+name: agent_renew_resets_onboarded_state
+description: AP-Autoconfig Renew clears onboard state and re-searches
+target: agent
+steps:
+  - set_state:
+      _onboarded: true
+  - inject:
+      src_mac: 02:00:cc:cc:cc:01
+      # type=0x000a AP_AUTOCONFIGURATION_RENEW mid=0x0500 flags=0x80 + EoM
+      cmdu_hex: "0000000a05000080000000"
+  - expect:
+      emit_count: 1
+      emits:
+        - message_type: AP_AUTOCONFIGURATION_SEARCH
+          tlv_types: [0x01, 0x0d, 0x0e, 0x80, 0x81, 0xb3]
+      state:
+        _onboarded: false
