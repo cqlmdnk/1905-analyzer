@@ -640,8 +640,51 @@ def emulator_agent_cmd(
     show_default=True,
 )
 @click.option("--ssid", default="emulator-mesh", show_default=True)
+@click.option(
+    "--network-key",
+    default="controller-mesh-psk",
+    show_default=True,
+    help="WPA2/WPA3 PSK the controller provisions in WSC M2 credentials.",
+)
+@click.option(
+    "--topology-interval-s",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Seconds between Topology Discovery emissions.",
+)
+@click.option(
+    "--topology-query-interval-s",
+    type=float,
+    default=30.0,
+    show_default=True,
+    help="Seconds between per-agent Topology Query emissions (post-onboarding).",
+)
+@click.option(
+    "--metrics-interval-s",
+    type=float,
+    default=30.0,
+    show_default=True,
+    help="Seconds between per-agent AP Metrics Query emissions (post-onboarding).",
+)
+@click.option(
+    "--link-metric-interval-s",
+    type=float,
+    default=60.0,
+    show_default=True,
+    help="Seconds between per-agent Link Metric Query emissions (post-onboarding).",
+)
 def emulator_controller_cmd(
-    interface: str, al_mac: str, radio_id: str, bssid: str, ssid: str
+    interface: str,
+    al_mac: str,
+    radio_id: str,
+    bssid: str,
+    ssid: str,
+    network_key: str,
+    topology_interval_s: float,
+    topology_query_interval_s: float,
+    metrics_interval_s: float,
+    link_metric_interval_s: float,
 ) -> None:
     """Start the fake controller. Press Ctrl-C to stop."""
     from ieee1905.core.tlvs._helpers import parse_mac_str
@@ -653,6 +696,11 @@ def emulator_controller_cmd(
         radio_id=parse_mac_str(radio_id),
         bssid=parse_mac_str(bssid),
         ssid=ssid.encode("utf-8"),
+        network_key=network_key.encode("utf-8"),
+        topology_interval_s=topology_interval_s,
+        topology_query_interval_s=topology_query_interval_s,
+        metrics_interval_s=metrics_interval_s,
+        link_metric_interval_s=link_metric_interval_s,
     )
     ctl.start()
     console.print(f"[green]Fake controller running on {interface}. Ctrl-C to stop.[/]")
