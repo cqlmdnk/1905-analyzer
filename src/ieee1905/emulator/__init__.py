@@ -14,7 +14,7 @@ Run them via the CLI::
     ieee1905 emulator controller <iface>
 """
 
-from ieee1905.emulator.agent import FakeAgent
+from ieee1905.emulator.agent import FakeAgent, RadioConfig
 from ieee1905.emulator.controller import FakeController
 
-__all__ = ["FakeAgent", "FakeController"]
+__all__ = ["FakeAgent", "FakeController", "RadioConfig"]

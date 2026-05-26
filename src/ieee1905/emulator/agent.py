@@ -133,6 +133,23 @@ _FREQ_BAND_TO_RF_BAND = {
     0x02: RF_BAND_60G,
 }
 
+
+@dataclass(slots=True)
+class RadioConfig:
+    """One physical radio's per-radio identity and 2.4/5/60 GHz hint.
+
+    The primary radio is constructed implicitly from the FakeAgent's
+    ``radio_id`` / ``bssid`` / ``freq_band`` / ``ssid`` fields, so this
+    dataclass is only used when the user explicitly adds extra radios via
+    ``FakeAgent(extra_radios=[...])``.
+    """
+
+    radio_id: bytes
+    bssid: bytes
+    freq_band: int = 0x01  # 0=2.4 GHz, 1=5 GHz, 2=60 GHz
+    op_class: int = 115  # 5 GHz 20 MHz; 2.4 GHz primary uses op_class 81
+    ssid: bytes | None = None  # None -> inherit agent ssid (default)
+
 # CMDU types where the spec-mandated reply is just a 1905 ACK with no TLVs.
 # Most are "no-op for a fronthaul-only emulator with no clients" cases.
 _ACK_ONLY_REQUESTS: frozenset[int] = frozenset({
@@ -160,6 +177,10 @@ class FakeAgent:
     autoconfig_interval_s: float = 30.0
     metrics_interval_s: float = 30.0
     freq_band: int = 0x01  # 0=2.4GHz, 1=5GHz, 2=60GHz
+    #: Extra radios beyond the implicit primary one. The agent reports
+    #: each radio's basic capability + operating BSS, scan / CAC
+    #: capability, and emits per-BSS AP Metrics for them.
+    extra_radios: list[RadioConfig] = field(default_factory=list)
 
     _ctx: EmulatorContext | None = None
     _sniff_thread: threading.Thread | None = None
@@ -167,6 +188,17 @@ class FakeAgent:
     _wsc_session: WscEnrolleeSession | None = None
     _bss_credentials: list[BssCredential] = field(default_factory=list)
     _onboarded: bool = False
+
+    def _radios(self) -> list[RadioConfig]:
+        """Return every radio (primary + extras) as a uniform list."""
+        primary = RadioConfig(
+            radio_id=self.radio_id,
+            bssid=self.bssid,
+            freq_band=self.freq_band,
+            op_class=81 if self.freq_band == 0x00 else 115,
+            ssid=self.ssid,
+        )
+        return [primary, *self.extra_radios]
 
     def start(self) -> None:
         self._ctx = EmulatorContext(
@@ -309,27 +341,34 @@ class FakeAgent:
             # the emulator owns no real radio and no clients.
             self._send_ack(src, mid)
 
-    def _operational_bsses(self) -> list[OperationalBss]:
-        """Return the per-radio operational BSS list for Topology Response.
+    def _operational_bsses_for(self, radio: RadioConfig) -> list[OperationalBss]:
+        """Return the BSS list to advertise for one specific radio.
 
-        Post-onboarding this reflects the BSS(es) the controller provisioned
-        in M2 — using the SSID and BSSID (the WPS Credential's MAC Address
-        attribute per WPS v2.0 §11). If a controller never sees those
-        provisioned values echo back in Topology Response, it concludes
-        "BSS not yet configured" and schedules a fresh AP-Autoconfig Renew,
-        which manifests as a permanent onboarding loop. Pre-onboarding,
-        fall back to the CLI-supplied defaults so the report is always
-        well-formed.
+        Post-onboarding the primary radio reflects the BSS(es) the
+        controller provisioned in M2 (SSID + BSSID from the WPS
+        Credential). Extra radios always report the BSSID/SSID they were
+        configured with — the registrar emulator currently provisions
+        only the radio matching the M1's MAC Address attribute, which is
+        the primary radio.
         """
-        if self._bss_credentials:
+        if radio.radio_id == self.radio_id and self._bss_credentials:
             return [
                 OperationalBss(
-                    bssid=(cred.mac_address if cred.mac_address else self.bssid),
-                    ssid=(cred.ssid if cred.ssid else self.ssid),
+                    bssid=(cred.mac_address if cred.mac_address else radio.bssid),
+                    ssid=(cred.ssid if cred.ssid else (radio.ssid or self.ssid)),
                 )
                 for cred in self._bss_credentials
             ]
-        return [OperationalBss(bssid=self.bssid, ssid=self.ssid)]
+        return [OperationalBss(bssid=radio.bssid, ssid=(radio.ssid or self.ssid))]
+
+    def _all_operational_bsses(self) -> list[OperationalBssRadio]:
+        """Top-level helper: ApOperationalBss radio list for every radio."""
+        return [
+            OperationalBssRadio(
+                radio_id=radio.radio_id, bsses=self._operational_bsses_for(radio)
+            )
+            for radio in self._radios()
+        ]
 
     def _reply_topology_response(self, dst: bytes, query: CMDU) -> None:
         assert self._ctx is not None
@@ -358,14 +397,7 @@ class FakeAgent:
                     interfaces=[LocalInterface(mac=self.al_mac, media_type=0x0001)],
                 ),
                 SupportedService(services=[0x01]),  # Multi-AP Agent
-                ApOperationalBss(
-                    radios=[
-                        OperationalBssRadio(
-                            radio_id=self.radio_id,
-                            bsses=self._operational_bsses(),
-                        )
-                    ]
-                ),
+                ApOperationalBss(radios=self._all_operational_bsses()),
                 MultiApProfile(profile=0x02),
             ],
         )
@@ -381,59 +413,68 @@ class FakeAgent:
         # AP Operational BSS belongs in Topology Response;
         # SupportedFreqBand / SupportedRole belong in AP-Autoconfig
         # Response.
-        cmdu_bytes = build_cmdu(
-            message_type=MessageType.EM_AP_CAPABILITY_REPORT.value,
-            message_id=query.header.message_id,
-            typed_tlvs=[
-                ApCapability(flags=0xC0),
+        radios = self._radios()
+        tlvs: list[object] = [ApCapability(flags=0xC0)]
+        for radio in radios:
+            tlvs.append(
                 ApRadioBasicCapabilities(
-                    radio_id=self.radio_id,
+                    radio_id=radio.radio_id,
                     max_bsses_supported=4,
                     operating_classes=[
                         OperatingClassCapability(
-                            op_class=81, max_tx_eirp_dbm=23, non_operable_channels=[]
+                            op_class=radio.op_class,
+                            max_tx_eirp_dbm=23,
+                            non_operable_channels=[],
                         ),
                     ],
-                ),
-                # 802.11n/HT cap byte: 2x2 SS, SGI-20+40, HT-40. Bits per
-                # Multi-AP v1.0 Table 17-6.
-                ApHtCapabilities(radio_id=self.radio_id, flags=0x5E),
-                # 802.11ax/HE: minimal MCS map (2x2 1024-QAM = 0xFFFA repeated
-                # for 80/160/80+80). Flags advertise 2x2 SS, no 160 MHz,
-                # SU/MU beamformer, UL OFDMA, DL OFDMA.
+                )
+            )
+            # 802.11n/HT cap byte: 2x2 SS, SGI-20+40, HT-40. Bits per
+            # Multi-AP v1.0 Table 17-6.
+            tlvs.append(ApHtCapabilities(radio_id=radio.radio_id, flags=0x5E))
+            # 802.11ax/HE: 2x2 MCS, SU/MU beamformer, UL+DL OFDMA.
+            tlvs.append(
                 ApHeCapabilities(
-                    radio_id=self.radio_id,
+                    radio_id=radio.radio_id,
                     supported_he_mcs=b"\xfa\xff",
                     flags=0x40F8,
-                ),
-                ChannelScanCapabilities(
-                    radios=[
-                        ChannelScanCapabilityRadio(
-                            radio_id=self.radio_id,
-                            flags=0x00,
-                            min_scan_interval_s=0,
-                            operating_classes=[
-                                # Empty channel list = "all channels in this op class".
-                                ChannelScanCapabilityOpClass(op_class=81, channels=[]),
-                            ],
-                        )
-                    ]
-                ),
-                CacCapabilities(
-                    country_code=b"US",
-                    radios=[
-                        # Empty cac_types list = "this radio doesn't support CAC".
-                        CacRadioCapability(radio_id=self.radio_id, cac_types=[]),
-                    ],
-                ),
-                Profile2ApCapability(
-                    max_prioritization_rules=4,
-                    reserved=0,
-                    capabilities=0xC0,  # BSS-config-param + byte-count units
-                    max_total_number_of_vids=16,
-                ),
-                MetricCollectionInterval(interval_ms=5000),
-            ],
+                )
+            )
+        tlvs.extend([
+            ChannelScanCapabilities(
+                radios=[
+                    ChannelScanCapabilityRadio(
+                        radio_id=radio.radio_id,
+                        flags=0x00,
+                        min_scan_interval_s=0,
+                        operating_classes=[
+                            # Empty channel list = "all channels in this op class".
+                            ChannelScanCapabilityOpClass(op_class=radio.op_class, channels=[]),
+                        ],
+                    )
+                    for radio in radios
+                ]
+            ),
+            CacCapabilities(
+                country_code=b"US",
+                radios=[
+                    # Empty cac_types list = "this radio doesn't support CAC".
+                    CacRadioCapability(radio_id=radio.radio_id, cac_types=[])
+                    for radio in radios
+                ],
+            ),
+            Profile2ApCapability(
+                max_prioritization_rules=4,
+                reserved=0,
+                capabilities=0xC0,  # BSS-config-param + byte-count units
+                max_total_number_of_vids=16,
+            ),
+            MetricCollectionInterval(interval_ms=5000),
+        ])
+        cmdu_bytes = build_cmdu(
+            message_type=MessageType.EM_AP_CAPABILITY_REPORT.value,
+            message_id=query.header.message_id,
+            typed_tlvs=tlvs,
         )
         send_frame(self._ctx, cmdu_bytes, dst=dst)
 
@@ -443,31 +484,30 @@ class FakeAgent:
         Multi-AP v2.0 §17.1.14: at minimum one ``ApMetrics`` per BSS.
         Post-onboarding the report must use the BSSID(s) the controller
         provisioned in M2; otherwise the controller's per-radio BSS
-        accounting cannot match the metric to a BSS and logs
-        "bss metrics missing for ale[...] radio[...]". RadioMetrics
-        (R2 §17.2.60) is included because most controllers reject
-        reports that lack per-radio utilization.
+        accounting cannot match the metric to a BSS. RadioMetrics
+        (R2 §17.2.60) is included once per radio since strict
+        controllers reject reports that lack per-radio utilization.
         """
-        bsses = self._operational_bsses()
         tlvs: list[object] = []
-        for bss in bsses:
+        for radio in self._radios():
+            for bss in self._operational_bsses_for(radio):
+                tlvs.append(
+                    ApMetrics(
+                        bssid=bss.bssid,
+                        channel_utilization=20,
+                        num_associated_stas=0,
+                        esp_info=b"\x80\x00\x10\x20",
+                    )
+                )
             tlvs.append(
-                ApMetrics(
-                    bssid=bss.bssid,
-                    channel_utilization=20,
-                    num_associated_stas=0,
-                    esp_info=b"\x80\x00\x10\x20",
+                RadioMetrics(
+                    radio_id=radio.radio_id,
+                    noise=180,  # spec: u8, dBm offset by 220 (so 200 == -20 dBm worst)
+                    transmit_utilization=15,
+                    receive_utilization=10,
+                    receive_other_utilization=5,
                 )
             )
-        tlvs.append(
-            RadioMetrics(
-                radio_id=self.radio_id,
-                noise=180,  # spec: u8, dBm offset by 220 (so 200 == -20 dBm worst)
-                transmit_utilization=15,
-                receive_utilization=10,
-                receive_other_utilization=5,
-            )
-        )
         return tlvs
 
     def _reply_ap_metrics_response(self, dst: bytes, query: CMDU) -> None:
@@ -724,10 +764,9 @@ class FakeAgent:
             message_id=query.header.message_id,
             typed_tlvs=[
                 BackhaulStaRadioCapabilities(
-                    radio_id=self.radio_id,
-                    flags=0x00,
-                    backhaul_sta_mac=None,
-                ),
+                    radio_id=radio.radio_id, flags=0x00, backhaul_sta_mac=None
+                )
+                for radio in self._radios()
             ],
         )
         send_frame(self._ctx, cmdu_bytes, dst=dst)
@@ -744,21 +783,24 @@ class FakeAgent:
         sanctioned way to say "no DFS activity" for a non-DFS radio.
         """
         assert self._ctx is not None
+        tlvs: list[object] = [
+            ChannelPreference(
+                radio_id=radio.radio_id,
+                operating_classes=[
+                    # Empty channel list = "all channels in this op
+                    # class carry the same preference (0xF0 = top)".
+                    ChannelPreferenceOpClass(
+                        op_class=radio.op_class, channels=[], preference=0xF0
+                    ),
+                ],
+            )
+            for radio in self._radios()
+        ]
+        tlvs.append(CacStatusReport())  # empty: no DFS activity
         cmdu_bytes = build_cmdu(
             message_type=MessageType.EM_CHANNEL_PREFERENCE_REPORT.value,
             message_id=query.header.message_id,
-            typed_tlvs=[
-                ChannelPreference(
-                    radio_id=self.radio_id,
-                    operating_classes=[
-                        # Op class 81 (2.4 GHz 20 MHz, ch 1-13). Empty
-                        # channel list = "all channels in this op class
-                        # carry the same preference".
-                        ChannelPreferenceOpClass(op_class=81, channels=[], preference=0xF0),
-                    ],
-                ),
-                CacStatusReport(),  # empty: no DFS activity
-            ],
+            typed_tlvs=tlvs,
         )
         send_frame(self._ctx, cmdu_bytes, dst=dst)
 
@@ -772,12 +814,14 @@ class FakeAgent:
         2. OPERATING_CHANNEL_REPORT confirming the channel actually in use.
         """
         assert self._ctx is not None
-        # 1) selection response
+        radios = self._radios()
+        # 1) selection response — accept on every radio.
         resp_bytes = build_cmdu(
             message_type=MessageType.EM_CHANNEL_SELECTION_RESPONSE.value,
             message_id=query.header.message_id,
             typed_tlvs=[
-                ChannelSelectionResponse(radio_id=self.radio_id, response_code=0x00),
+                ChannelSelectionResponse(radio_id=radio.radio_id, response_code=0x00)
+                for radio in radios
             ],
         )
         send_frame(self._ctx, resp_bytes, dst=dst)
@@ -789,12 +833,16 @@ class FakeAgent:
             message_id=self._ctx.next_mid(),
             typed_tlvs=[
                 OperatingChannelReport(
-                    radio_id=self.radio_id,
+                    radio_id=radio.radio_id,
                     operating_classes=[
-                        OperatingChannelOpClass(op_class=81, channel=6),
+                        OperatingChannelOpClass(
+                            op_class=radio.op_class,
+                            channel=6 if radio.freq_band == 0x00 else 36,
+                        ),
                     ],
                     current_transmit_power_dbm=20,
-                ),
+                )
+                for radio in radios
             ],
         )
         send_frame(self._ctx, report_bytes, dst=dst)

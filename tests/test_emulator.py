@@ -18,7 +18,7 @@ from ieee1905.core import CMDU, CMDUHeader, MessageType, RawTLV
 from ieee1905.core.cmdu import CMDU_HEADER_SIZE, CMDUParseError
 from ieee1905.core.tlv import encode_typed
 from ieee1905.core.tlvs import AlMacAddress, AutoconfigFreqBand, SearchedRole, WscFrame
-from ieee1905.emulator import wsc
+from ieee1905.emulator import RadioConfig, wsc
 from ieee1905.emulator._common import EmulatorContext
 from ieee1905.emulator.agent import FakeAgent
 from ieee1905.emulator.controller import FakeController
@@ -496,6 +496,81 @@ def test_controller_channel_preference_report_triggers_selection_request() -> No
     msg_types = [CMDU.from_bytes(b).header.message_type for b in captured]
     assert MessageType.EM_ACK.value in msg_types
     assert MessageType.EM_CHANNEL_SELECTION_REQUEST.value in msg_types
+
+
+def test_multi_radio_topology_response_lists_every_radio() -> None:
+    """A FakeAgent with ``extra_radios`` should advertise every radio in
+    ApOperationalBss with the correct radio_id and (radio-specific)
+    BSSID/SSID."""
+    agent = _new_agent()
+    agent.extra_radios = [
+        RadioConfig(
+            radio_id=b"\x02\xaa\xbb\xcc\xee\x05",
+            bssid=b"\x02\xaa\xbb\xcc\xff\x05",
+            freq_band=0x01,
+            op_class=115,
+            ssid=b"emulator-5g",
+        ),
+    ]
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append(cmdu_bytes)
+
+    with patch("ieee1905.emulator.agent.send_frame", side_effect=fake_send):
+        query = CMDU.from_bytes(bytes.fromhex("0000000200420080") + b"\x00\x00\x00")
+        agent._on_cmdu(CONTROLLER_MAC, query)
+
+    cmdu = CMDU.from_bytes(captured[0])
+    assert cmdu.header.message_type == MessageType.TOPOLOGY_RESPONSE.value
+    apop = next(t for t in cmdu.tlvs if t.tlv_type == 0x83)  # ApOperationalBss
+    # 1-byte radio count then each entry: radio_id(6) + bss_count(1) + bsses
+    assert apop.payload[0] == 2  # two radios listed
+    # First entry starts at payload[1:] with primary radio_id
+    primary_id = apop.payload[1:7]
+    # Walk past primary BSS list: payload[7] is bss_count, then per-BSS variable
+    bss_count_primary = apop.payload[7]
+    cursor = 8
+    for _ in range(bss_count_primary):
+        # bssid(6) + ssid_len(1) + ssid_bytes
+        cursor += 6
+        slen = apop.payload[cursor]
+        cursor += 1 + slen
+    second_id = apop.payload[cursor : cursor + 6]
+    assert primary_id == RADIO_ID
+    assert second_id == b"\x02\xaa\xbb\xcc\xee\x05"
+
+
+def test_multi_radio_ap_capability_report_emits_per_radio_caps() -> None:
+    """AP Capability Report must repeat HT/HE/RadioBasicCaps for every
+    radio so a strict controller doesn't see a partial inventory."""
+    agent = _new_agent()
+    agent.extra_radios = [
+        RadioConfig(
+            radio_id=b"\x02\xaa\xbb\xcc\xee\x05",
+            bssid=b"\x02\xaa\xbb\xcc\xff\x05",
+            freq_band=0x01,
+            op_class=115,
+        ),
+    ]
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append(cmdu_bytes)
+
+    with patch("ieee1905.emulator.agent.send_frame", side_effect=fake_send):
+        query = CMDU.from_bytes(bytes.fromhex("0000800100ff0080") + b"\x00\x00\x00")
+        agent._on_cmdu(CONTROLLER_MAC, query)
+
+    cmdu = CMDU.from_bytes(captured[0])
+    # Count occurrences of each per-radio TLV type:
+    counts = {0x85: 0, 0x86: 0, 0x88: 0}
+    for t in cmdu.tlvs:
+        if t.tlv_type in counts:
+            counts[t.tlv_type] += 1
+    assert counts[0x85] == 2  # ApRadioBasicCapabilities per radio
+    assert counts[0x86] == 2  # ApHtCapabilities per radio
+    assert counts[0x88] == 2  # ApHeCapabilities per radio
 
 
 def test_controller_full_handshake_drives_agent_to_onboarded() -> None:
