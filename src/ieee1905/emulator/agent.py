@@ -45,8 +45,16 @@ Inbound CMDU handlers
   CLIENT_ASSOCIATION_CONTROL_REQUEST, CHANNEL_SCAN_REQUEST,
   CAC_REQUEST, CAC_TERMINATION, BACKHAUL_STEERING_REQUEST.
 
-Intentional gaps: no multi-radio, no associated clients, no DPP,
-no encrypted 1905 transport. Anything outside the list above is
+Client association simulation
+
+- ``associate_client(mac, bssid=None)`` and ``disassociate_client(mac)``
+  flip a STA in / out of the agent's BSS and emit a Topology
+  Notification carrying a ``ClientAssociationEvent`` TLV.
+- The Topology Response inventory and AP Metrics counts update to
+  reflect the current associated-client set.
+
+Intentional gaps: no DPP onboarding, no encrypted 1905 transport, no
+RF-side beacon/probe simulation. Anything outside the list above is
 silently dropped.
 """
 
@@ -67,6 +75,9 @@ from ieee1905.core.tlvs import (
     ApOperationalBss,
     ApRadioAdvancedCapabilities,
     ApRadioBasicCapabilities,
+    AssociatedClient,
+    AssociatedClients,
+    AssociatedClientsBss,
     AutoconfigFreqBand,
     BackhaulStaRadioCapabilities,
     CacCapabilities,
@@ -78,6 +89,7 @@ from ieee1905.core.tlvs import (
     ChannelScanCapabilityOpClass,
     ChannelScanCapabilityRadio,
     ChannelSelectionResponse,
+    ClientAssociationEvent,
     ClientCapabilityReport,
     DeviceInformation,
     LocalInterface,
@@ -188,6 +200,8 @@ class FakeAgent:
     _wsc_session: WscEnrolleeSession | None = None
     _bss_credentials: list[BssCredential] = field(default_factory=list)
     _onboarded: bool = False
+    # client MAC -> (bssid the STA is associated with, time.monotonic() assoc'd at)
+    _associated_clients: dict[bytes, tuple[bytes, float]] = field(default_factory=dict)
 
     def _radios(self) -> list[RadioConfig]:
         """Return every radio (primary + extras) as a uniform list."""
@@ -274,6 +288,87 @@ class FakeAgent:
             send_frame(self._ctx, cmdu_bytes)
         except Exception as exc:  # noqa: BLE001
             logger.warning("topology discovery send failed: %s", exc)
+
+    # ---- client association simulation -------------------------------------
+
+    def associate_client(self, client_mac: bytes, bssid: bytes | None = None) -> None:
+        """Simulate a STA associating with one of our BSSes.
+
+        Emits a Topology Notification carrying the
+        ``ClientAssociationEvent`` TLV (associated=true) per Multi-AP
+        v1.0 §17.1.7, and updates the agent's bookkeeping so subsequent
+        Topology Response and AP Metrics emissions include the STA.
+
+        ``bssid`` defaults to the primary BSSID (or, post-onboarding, the
+        first credentialed BSSID).
+        """
+        if len(client_mac) != 6:
+            raise ValueError("client_mac must be 6 bytes")
+        target_bssid = bssid if bssid is not None else self._default_bssid()
+        self._associated_clients[bytes(client_mac)] = (bytes(target_bssid), time.monotonic())
+        self._send_topology_notification(
+            ClientAssociationEvent(
+                client_mac=bytes(client_mac), bssid=bytes(target_bssid), associated=True
+            )
+        )
+
+    def disassociate_client(self, client_mac: bytes) -> None:
+        """Simulate a previously-associated STA leaving.
+
+        No-op if the STA isn't currently associated. Emits a Topology
+        Notification with ``associated=false`` so the controller can
+        update its own STA tracking.
+        """
+        entry = self._associated_clients.pop(bytes(client_mac), None)
+        if entry is None:
+            return
+        self._send_topology_notification(
+            ClientAssociationEvent(
+                client_mac=bytes(client_mac), bssid=entry[0], associated=False
+            )
+        )
+
+    def _default_bssid(self) -> bytes:
+        if self._bss_credentials and self._bss_credentials[0].mac_address:
+            return self._bss_credentials[0].mac_address
+        return self.bssid
+
+    def _send_topology_notification(self, event: ClientAssociationEvent) -> None:
+        """Emit a Topology Notification (relay-multicast) carrying ``event``."""
+        if self._ctx is None:
+            # In tests, the heartbeat thread isn't running; ignore.
+            return
+        cmdu_bytes = build_cmdu(
+            message_type=MessageType.TOPOLOGY_NOTIFICATION.value,
+            message_id=self._ctx.next_mid(),
+            typed_tlvs=[AlMacAddress(al_mac=self.al_mac), event],
+        )
+        try:
+            send_frame(self._ctx, cmdu_bytes)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("topology notification send failed: %s", exc)
+
+    def _associated_clients_tlv(self) -> AssociatedClients | None:
+        """Build an AssociatedClients TLV grouping the agent's STAs per BSS.
+
+        Returns ``None`` when no STAs are associated — the TLV is
+        optional in Topology Response when the agent has no clients.
+        """
+        if not self._associated_clients:
+            return None
+        now = time.monotonic()
+        by_bssid: dict[bytes, list[AssociatedClient]] = {}
+        for client_mac, (bssid, assoc_at) in self._associated_clients.items():
+            seconds = max(0, int(now - assoc_at)) & 0xFFFF
+            by_bssid.setdefault(bssid, []).append(
+                AssociatedClient(client_mac=client_mac, seconds_since_assoc=seconds)
+            )
+        return AssociatedClients(
+            bsses=[
+                AssociatedClientsBss(bssid=bssid, clients=clients)
+                for bssid, clients in by_bssid.items()
+            ]
+        )
 
     def _send_autoconfig_search(self) -> None:
         assert self._ctx is not None
@@ -399,6 +494,7 @@ class FakeAgent:
                 SupportedService(services=[0x01]),  # Multi-AP Agent
                 ApOperationalBss(radios=self._all_operational_bsses()),
                 MultiApProfile(profile=0x02),
+                *([self._associated_clients_tlv()] if self._associated_clients else []),
             ],
         )
         send_frame(self._ctx, cmdu_bytes, dst=dst)
@@ -491,11 +587,14 @@ class FakeAgent:
         tlvs: list[object] = []
         for radio in self._radios():
             for bss in self._operational_bsses_for(radio):
+                sta_count = sum(
+                    1 for _, (b, _) in self._associated_clients.items() if b == bss.bssid
+                )
                 tlvs.append(
                     ApMetrics(
                         bssid=bss.bssid,
                         channel_utilization=20,
-                        num_associated_stas=0,
+                        num_associated_stas=sta_count,
                         esp_info=b"\x80\x00\x10\x20",
                     )
                 )

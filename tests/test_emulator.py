@@ -498,6 +498,95 @@ def test_controller_channel_preference_report_triggers_selection_request() -> No
     assert MessageType.EM_CHANNEL_SELECTION_REQUEST.value in msg_types
 
 
+def test_associate_client_emits_topology_notification_with_event() -> None:
+    """Calling ``agent.associate_client(...)`` must emit a Topology
+    Notification CMDU carrying a ``ClientAssociationEvent`` TLV with
+    associated=true and the requested STA MAC + BSSID."""
+    agent = _new_agent()
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append(cmdu_bytes)
+
+    with patch("ieee1905.emulator.agent.send_frame", side_effect=fake_send):
+        agent.associate_client(b"\xaa\xbb\xcc\xdd\xee\x01")
+
+    assert len(captured) == 1
+    cmdu = CMDU.from_bytes(captured[0])
+    assert cmdu.header.message_type == MessageType.TOPOLOGY_NOTIFICATION.value
+    types = {t.tlv_type for t in cmdu.tlvs}
+    assert {0x01, 0x92}.issubset(types)  # AL MAC + ClientAssociationEvent
+    ev = next(t for t in cmdu.tlvs if t.tlv_type == 0x92).payload
+    assert ev[0:6] == b"\xaa\xbb\xcc\xdd\xee\x01"  # client MAC
+    assert ev[6:12] == BSSID  # bssid (default = agent's primary)
+    assert ev[12] == 0x80  # associated=true
+    assert b"\xaa\xbb\xcc\xdd\xee\x01" in agent._associated_clients
+
+
+def test_disassociate_client_emits_topology_notification_with_clear_event() -> None:
+    agent = _new_agent()
+    agent.associate_client(b"\xaa\xbb\xcc\xdd\xee\x02")
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append(cmdu_bytes)
+
+    with patch("ieee1905.emulator.agent.send_frame", side_effect=fake_send):
+        agent.disassociate_client(b"\xaa\xbb\xcc\xdd\xee\x02")
+
+    assert len(captured) == 1
+    cmdu = CMDU.from_bytes(captured[0])
+    assert cmdu.header.message_type == MessageType.TOPOLOGY_NOTIFICATION.value
+    ev = next(t for t in cmdu.tlvs if t.tlv_type == 0x92).payload
+    assert ev[12] == 0x00  # associated=false
+    assert b"\xaa\xbb\xcc\xdd\xee\x02" not in agent._associated_clients
+
+
+def test_topology_response_includes_associated_clients_when_stas_present() -> None:
+    """After at least one STA has associated, Topology Response should
+    carry an AssociatedClients (0x84) TLV summarising the BSS membership."""
+    agent = _new_agent()
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append(cmdu_bytes)
+
+    with patch("ieee1905.emulator.agent.send_frame", side_effect=fake_send):
+        agent.associate_client(b"\x11\x22\x33\x44\x55\x66")
+        captured.clear()  # drop the notification
+        query = CMDU.from_bytes(bytes.fromhex("0000000200420080") + b"\x00\x00\x00")
+        agent._on_cmdu(CONTROLLER_MAC, query)
+
+    cmdu = CMDU.from_bytes(captured[0])
+    assert cmdu.header.message_type == MessageType.TOPOLOGY_RESPONSE.value
+    types = {t.tlv_type for t in cmdu.tlvs}
+    assert 0x84 in types  # AssociatedClients TLV present
+    # And the BSS payload includes our STA MAC verbatim.
+    assoc = next(t for t in cmdu.tlvs if t.tlv_type == 0x84)
+    assert b"\x11\x22\x33\x44\x55\x66" in assoc.payload
+
+
+def test_ap_metrics_response_counts_associated_stas_per_bss() -> None:
+    agent = _new_agent()
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append(cmdu_bytes)
+
+    with patch("ieee1905.emulator.agent.send_frame", side_effect=fake_send):
+        agent.associate_client(b"\x11\x22\x33\x44\x55\x66")
+        agent.associate_client(b"\x11\x22\x33\x44\x55\x77")
+        captured.clear()
+        query = CMDU.from_bytes(bytes.fromhex("0000800b01010080") + b"\x00\x00\x00")
+        agent._on_cmdu(CONTROLLER_MAC, query)
+
+    cmdu = CMDU.from_bytes(captured[0])
+    # ApMetrics payload layout: bssid(6) + ch_util(1) + num_assoc_stas(2) + esp_info(4)
+    ap_metrics_tlv = next(t for t in cmdu.tlvs if t.tlv_type == 0x94)
+    # bytes [7:9] = num_associated_stas (uint16 BE) — should be 2
+    assert int.from_bytes(ap_metrics_tlv.payload[7:9], "big") == 2
+
+
 def test_multi_radio_topology_response_lists_every_radio() -> None:
     """A FakeAgent with ``extra_radios`` should advertise every radio in
     ApOperationalBss with the correct radio_id and (radio-specific)
