@@ -352,3 +352,148 @@ def parse_credentials(inner: bytes) -> list[BssCredential]:
         return creds
     flat = _credential_from_attr_stream(inner)
     return [flat] if flat is not None else []
+
+
+# ---------------------------------------------------------------------------
+# Registrar side — given an inbound M1, build a spec-conformant M2.
+# Used by the controller emulator and by the in-process integration tests.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class WscRegistrarSession:
+    """State a WSC registrar needs to issue M2 in response to one M1.
+
+    Constructed from an M1 attribute stream. The DH exchange completes
+    immediately on construction (registrar already knows the enrollee
+    public key from M1, so it can derive the session keys eagerly).
+    """
+
+    m1_bytes: bytes
+    enrollee_nonce: bytes
+    enrollee_mac: bytes
+    enrollee_public_key: bytes
+
+    registrar_nonce: bytes = field(default_factory=lambda: os.urandom(16))
+    uuid_r: bytes = field(default_factory=lambda: uuid.uuid4().bytes)
+
+    _dh_private: int = 0
+    _dh_public: int = 0
+    _keys: WscKeys | None = None
+
+    def __post_init__(self) -> None:
+        self._dh_private = int.from_bytes(os.urandom(_PK_BYTES), "big") % (_DH_P - 1)
+        if self._dh_private < 2:
+            self._dh_private = 2
+        self._dh_public = pow(_DH_G, self._dh_private, _DH_P)
+        e_pub = _pk_to_int(self.enrollee_public_key)
+        shared = pow(e_pub, self._dh_private, _DH_P)
+        dh_key = sha256(_int_to_pk(shared)).digest()
+        kdk = hmac.new(
+            dh_key,
+            self.enrollee_nonce + self.enrollee_mac + self.registrar_nonce,
+            sha256,
+        ).digest()
+        block = _kdf(kdk, 640)
+        self._keys = WscKeys(
+            auth_key=block[0:32], key_wrap_key=block[32:48], emsk=block[48:80]
+        )
+
+    @property
+    def keys(self) -> WscKeys:
+        assert self._keys is not None
+        return self._keys
+
+    @property
+    def registrar_public_key(self) -> bytes:
+        return _int_to_pk(self._dh_public)
+
+    @classmethod
+    def from_m1(cls, m1_bytes: bytes) -> WscRegistrarSession:
+        """Build a registrar session from the enrollee's M1 attribute stream.
+
+        Raises ``ValueError`` if M1 is missing one of the four attributes
+        the registrar needs to derive the WSC session keys.
+        """
+        attrs = dict(parse_attributes(m1_bytes))
+        try:
+            return cls(
+                m1_bytes=m1_bytes,
+                enrollee_nonce=attrs[ATTR_ENROLLEE_NONCE],
+                enrollee_mac=attrs[ATTR_MAC_ADDRESS],
+                enrollee_public_key=attrs[ATTR_PUBLIC_KEY],
+            )
+        except KeyError as exc:
+            raise ValueError(f"M1 missing required WSC attribute {exc}") from exc
+
+
+def _encrypt_settings(keys: WscKeys, inner: bytes) -> bytes:
+    """Wrap ``inner`` with KWA, PKCS#7-pad, AES-128-CBC-encrypt, IV-prepend."""
+    kwa = hmac.new(keys.auth_key, inner, sha256).digest()[:8]
+    plaintext = inner + _attr(ATTR_KEY_WRAP_AUTH, kwa)
+    pad_len = 16 - (len(plaintext) % 16)
+    plaintext_padded = plaintext + bytes([pad_len]) * pad_len
+    iv = os.urandom(16)
+    cipher = Cipher(
+        algorithms.AES(keys.key_wrap_key), modes.CBC(iv), backend=default_backend()
+    )
+    return iv + cipher.encryptor().update(plaintext_padded)
+
+
+def build_m2(
+    session: WscRegistrarSession,
+    credential: BssCredential,
+    *,
+    rf_band: int = RF_BAND_2G,
+    manufacturer: bytes = b"ieee1905-suite",
+    model_name: bytes = b"emulator",
+    model_number: bytes = b"1",
+    serial_number: bytes = b"0",
+    device_name: bytes = b"controller-emulator",
+) -> bytes:
+    """Build a WSC M2 attribute stream that ``session``'s enrollee will accept.
+
+    The plaintext credential body is laid out flat (SSID / AuthType /
+    EncrType / NetworkKey / MAC Address) under Encrypted Settings, which
+    matches the Multi-AP M2 shape we already parse on the agent side. The
+    outer Authenticator (8-byte HMAC over ``M1 || M2-without-auth``) is
+    appended last, per WPS v2.0 §8.3.2.
+    """
+    pdt = bytes.fromhex("00060050f2040001")
+    keys = session.keys
+
+    inner = (
+        _attr(ATTR_SSID, credential.ssid)
+        + _attr(ATTR_AUTH_TYPE, struct.pack("!H", credential.auth_type))
+        + _attr(ATTR_ENCR_TYPE, struct.pack("!H", credential.encr_type))
+        + _attr(ATTR_NETWORK_KEY, credential.network_key)
+        + _attr(ATTR_MAC_ADDRESS, credential.mac_address)
+    )
+    encrypted_settings = _encrypt_settings(keys, inner)
+
+    m2_core = (
+        _attr(ATTR_VERSION, bytes([0x10]))
+        + _attr(ATTR_MESSAGE_TYPE, bytes([WSC_MSG_M2]))
+        + _attr(ATTR_ENROLLEE_NONCE, session.enrollee_nonce)
+        + _attr(ATTR_REGISTRAR_NONCE, session.registrar_nonce)
+        + _attr(0x1048, session.uuid_r)  # UUID-R
+        + _attr(ATTR_PUBLIC_KEY, session.registrar_public_key)
+        + _attr(ATTR_AUTH_TYPE_FLAGS, struct.pack("!H", 0x0133))
+        + _attr(ATTR_ENCR_TYPE_FLAGS, struct.pack("!H", 0x000D))
+        + _attr(ATTR_CONN_TYPE_FLAGS, bytes([0x01]))
+        + _attr(ATTR_CONFIG_METHODS, struct.pack("!H", 0x06C0))
+        + _attr(ATTR_MANUFACTURER, manufacturer)
+        + _attr(ATTR_MODEL_NAME, model_name)
+        + _attr(ATTR_MODEL_NUMBER, model_number)
+        + _attr(ATTR_SERIAL_NUMBER, serial_number)
+        + _attr(ATTR_PRIMARY_DEVICE_TYPE, pdt)
+        + _attr(ATTR_DEVICE_NAME, device_name)
+        + _attr(ATTR_RF_BANDS, bytes([rf_band]))
+        + _attr(ATTR_ASSOCIATION_STATE, struct.pack("!H", 0))
+        + _attr(ATTR_CONFIG_ERROR, struct.pack("!H", 0))
+        + _attr(ATTR_DEVICE_PASSWORD_ID, struct.pack("!H", 4))
+        + _attr(ATTR_OS_VERSION, struct.pack("!I", 0x80000001))
+        + _attr(ATTR_ENCRYPTED_SETTINGS, encrypted_settings)
+    )
+    auth = hmac.new(keys.auth_key, session.m1_bytes + m2_core, sha256).digest()[:8]
+    return m2_core + _attr(ATTR_AUTHENTICATOR, auth)

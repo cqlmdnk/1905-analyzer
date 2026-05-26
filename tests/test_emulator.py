@@ -15,9 +15,10 @@ from click.testing import CliRunner
 
 from ieee1905.cli.main import cli
 from ieee1905.core import CMDU, CMDUHeader, MessageType, RawTLV
-from ieee1905.core.cmdu import CMDU_HEADER_SIZE
+from ieee1905.core.cmdu import CMDU_HEADER_SIZE, CMDUParseError
 from ieee1905.core.tlv import encode_typed
 from ieee1905.core.tlvs import AlMacAddress, AutoconfigFreqBand, SearchedRole, WscFrame
+from ieee1905.emulator import wsc
 from ieee1905.emulator._common import EmulatorContext
 from ieee1905.emulator.agent import FakeAgent
 from ieee1905.emulator.controller import FakeController
@@ -370,6 +371,170 @@ def test_full_wsc_onboarding_end_to_end() -> None:
     cred = agent._bss_credentials[0]
     assert cred.ssid == b"home-mesh"
     assert cred.network_key == b"strong-password"
+
+
+def test_controller_topology_discovery_carries_supported_service() -> None:
+    """The controller's periodic Topology Discovery must advertise
+    SupportedService = Multi-AP Controller (0x00) so neighbors learn its
+    role on the first beacon. Also asserts the MacAddress TLV echoes
+    AL MAC (the phantom-ALE fix mirrored on the controller side)."""
+    ctl = _new_controller()
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append(cmdu_bytes)
+
+    with patch("ieee1905.emulator.controller.send_frame", side_effect=fake_send):
+        ctl._send_topology_discovery()
+
+    assert len(captured) == 1
+    cmdu = CMDU.from_bytes(captured[0])
+    assert cmdu.header.message_type == MessageType.TOPOLOGY_DISCOVERY.value
+    types = {t.tlv_type for t in cmdu.tlvs}
+    assert {0x01, 0x02, 0x80}.issubset(types)  # AL MAC + MAC Address + SupportedService
+    # Both MAC TLVs must reflect the AL MAC, not a separate radio MAC.
+    al_mac = next(t for t in cmdu.tlvs if t.tlv_type == 0x01).payload
+    iface_mac = next(t for t in cmdu.tlvs if t.tlv_type == 0x02).payload
+    assert al_mac == CONTROLLER_MAC and iface_mac == CONTROLLER_MAC
+
+
+def test_controller_emits_wsc_m2_in_response_to_m1() -> None:
+    """When an agent's M1 arrives, the controller emits an
+    AP-Autoconfig WSC CMDU whose WSC TLV decrypts to a BssCredential the
+    enrollee can consume."""
+    ctl = _new_controller()
+    captured: list[tuple[bytes, bytes]] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append((dst or b"\xff" * 6, cmdu_bytes))
+
+    # A live enrollee session gives us a valid M1 payload + the
+    # symmetric state needed to decrypt the M2 the controller emits.
+    enrollee = wsc.WscEnrolleeSession(enrollee_mac=AGENT_MAC)
+    m1 = enrollee.build_m1()
+    m1_cmdu = CMDU(
+        header=CMDUHeader(
+            message_type=MessageType.AP_AUTOCONFIGURATION_WSC.value,
+            message_id=0xBEEF,
+        ),
+        tlvs=[
+            RawTLV(tlv_type=0x85, payload=RADIO_ID + bytes([0, 0])),
+            encode_typed(WscFrame(wsc_payload=m1)),
+            RawTLV(tlv_type=0x00, payload=b""),
+        ],
+    )
+
+    with patch("ieee1905.emulator.controller.send_frame", side_effect=fake_send):
+        ctl._on_cmdu(AGENT_MAC, m1_cmdu)
+
+    # Two TX frames expected: WSC M2 first, then the post-onboarding
+    # AP Capability Query the controller fires automatically.
+    assert len(captured) == 2
+    dst0, m2_frame = captured[0]
+    dst1, q_frame = captured[1]
+    assert dst0 == AGENT_MAC and dst1 == AGENT_MAC
+    cmdu = CMDU.from_bytes(m2_frame)
+    assert cmdu.header.message_type == MessageType.AP_AUTOCONFIGURATION_WSC.value
+    assert CMDU.from_bytes(q_frame).header.message_type == (
+        MessageType.EM_AP_CAPABILITY_QUERY.value
+    )
+    wsc_tlvs = [t for t in cmdu.tlvs if t.tlv_type == 0x11]
+    assert len(wsc_tlvs) == 1
+
+    # Drive the enrollee's M2 path on the captured payload and confirm
+    # we recover the controller-supplied BSS credential.
+    attrs = dict(wsc.parse_attributes(wsc_tlvs[0].payload))
+    keys = wsc.derive_keys(
+        enrollee, attrs[wsc.ATTR_PUBLIC_KEY], attrs[wsc.ATTR_REGISTRAR_NONCE]
+    )
+    assert wsc.verify_authenticator(keys, enrollee.m1_bytes, wsc_tlvs[0].payload)
+    inner = wsc.decrypt_encrypted_settings(keys, attrs[wsc.ATTR_ENCRYPTED_SETTINGS])
+    creds = wsc.parse_credentials(inner)
+    assert len(creds) == 1
+    assert creds[0].ssid == ctl.ssid
+    assert creds[0].network_key == ctl.network_key
+    assert creds[0].mac_address == ctl.bssid
+
+
+def test_controller_promotes_agent_to_onboarded_on_capability_report() -> None:
+    """Receiving an AP Capability Report flips the agent's ``onboarded``
+    flag and triggers a Multi-AP Policy Config push + Channel Preference
+    Query — both required follow-ups in the Multi-AP v1.0 §17.1 flow."""
+    ctl = _new_controller()
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append(cmdu_bytes)
+
+    with patch("ieee1905.emulator.controller.send_frame", side_effect=fake_send):
+        report = CMDU.from_bytes(bytes.fromhex("0000800201230080") + b"\x00\x00\x00")
+        ctl._on_cmdu(AGENT_MAC, report)
+
+    agent = ctl._agents[AGENT_MAC]
+    assert agent.onboarded is True
+    msg_types = [CMDU.from_bytes(b).header.message_type for b in captured]
+    # The trio: ACK for the report itself + Policy Config + Channel Preference Query.
+    assert MessageType.EM_ACK.value in msg_types
+    assert MessageType.EM_MULTI_AP_POLICY_CONFIG_REQUEST.value in msg_types
+    assert MessageType.EM_CHANNEL_PREFERENCE_QUERY.value in msg_types
+
+
+def test_controller_channel_preference_report_triggers_selection_request() -> None:
+    ctl = _new_controller()
+    # Pretend we already discovered the agent and its radio.
+    state = ctl._touch_agent(AGENT_MAC)
+    state.radio_id = RADIO_ID
+    captured: list[bytes] = []
+
+    def fake_send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+        captured.append(cmdu_bytes)
+
+    with patch("ieee1905.emulator.controller.send_frame", side_effect=fake_send):
+        report = CMDU.from_bytes(bytes.fromhex("0000800501240080") + b"\x00\x00\x00")
+        ctl._on_cmdu(AGENT_MAC, report)
+
+    msg_types = [CMDU.from_bytes(b).header.message_type for b in captured]
+    assert MessageType.EM_ACK.value in msg_types
+    assert MessageType.EM_CHANNEL_SELECTION_REQUEST.value in msg_types
+
+
+def test_controller_full_handshake_drives_agent_to_onboarded() -> None:
+    """End-to-end in-process Search -> Response -> M1 -> M2 -> onboarded.
+
+    Mocks ``send_frame`` on both sides and shuttles every captured CMDU
+    back to the peer's ``_on_cmdu``. The agent reaches ``_onboarded=True``
+    with a BssCredential that mirrors the controller's configured SSID
+    and BSSID — proving the in-house registrar and enrollee speak the
+    same WSC dialect."""
+    agent = _new_agent()
+    ctl = _new_controller()
+    ctl.ssid = b"e2e-mesh"
+    ctl.network_key = b"e2e-test-key"
+    ctl.bssid = b"\x06\x06\x06\x06\x06\x06"
+
+    def shuttle(target, src_mac):  # type: ignore[no-untyped-def]
+        """Build a send_frame side-effect that hands frames to ``target``."""
+        def _send(ctx, cmdu_bytes, *, dst=None):  # type: ignore[no-untyped-def]
+            try:
+                cmdu = CMDU.from_bytes(cmdu_bytes)
+            except CMDUParseError:
+                return
+            target._on_cmdu(src_mac, cmdu)
+        return _send
+
+    with patch("ieee1905.emulator.agent.send_frame",
+               side_effect=shuttle(ctl, AGENT_MAC)), \
+         patch("ieee1905.emulator.controller.send_frame",
+               side_effect=shuttle(agent, CONTROLLER_MAC)):
+        # Kick off the dance with the agent's autoconfig Search emission.
+        agent._send_autoconfig_search()
+
+    assert agent._onboarded is True
+    assert len(agent._bss_credentials) == 1
+    cred = agent._bss_credentials[0]
+    assert cred.ssid == b"e2e-mesh"
+    assert cred.network_key == b"e2e-test-key"
+    assert cred.mac_address == ctl.bssid
 
 
 def test_heartbeat_emits_metrics_only_after_onboarding() -> None:

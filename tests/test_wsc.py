@@ -8,13 +8,10 @@ handshake can complete in-process without a real Multi-AP controller.
 from __future__ import annotations
 
 import hmac
-import os
 import struct
 from hashlib import sha256
 
 import pytest
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from ieee1905.emulator import wsc
 
@@ -34,28 +31,24 @@ def _build_m2(
     """Fabricate a registrar-side M2 that the enrollee should accept.
 
     Returns ``(m2_bytes, derived_keys, plaintext_inner)`` so individual
-    tests can poke at the intermediate values.
+    tests can poke at the intermediate values. The plaintext returned is
+    in the legacy WPS-nested form (0x100E Credential wrapper) for tests
+    that want to assert the parser's fallback behaviour; the on-wire
+    ``m2_bytes`` is the flat-form Multi-AP layout the production
+    ``build_m2`` helper now emits.
     """
-    # Registrar's own DH key pair.
-    r_private = int.from_bytes(os.urandom(192), "big") % (wsc._DH_P - 1) or 2
-    r_public = pow(wsc._DH_G, r_private, wsc._DH_P)
-    r_public_bytes = r_public.to_bytes(192, "big")
-    r_nonce = os.urandom(16)
-
-    # Mirror the enrollee's key derivation from the registrar's side.
-    shared = pow(session._dh_public, r_private, wsc._DH_P)
-    dh_key = sha256(shared.to_bytes(192, "big")).digest()
-    kdk = hmac.new(
-        dh_key,
-        session.enrollee_nonce + session.enrollee_mac + r_nonce,
-        sha256,
-    ).digest()
-    block = wsc._kdf(kdk, 640)
-    keys = wsc.WscKeys(
-        auth_key=block[0:32], key_wrap_key=block[32:48], emsk=block[48:80]
+    cred = wsc.BssCredential(
+        ssid=ssid,
+        auth_type=auth_type,
+        encr_type=encr_type,
+        network_key=network_key,
+        mac_address=b"\x02\x00\x00\x00\x00\x10",
     )
-
-    # Build the inner credential attribute stream.
+    registrar = wsc.WscRegistrarSession.from_m1(session.m1_bytes)
+    m2 = wsc.build_m2(registrar, cred, rf_band=session.rf_band)
+    # Mirror the plaintext shape the legacy nested-credential parser
+    # expects so the existing decrypt/padding/KWA tests still have a
+    # canonical reference block to chew on.
     credential = (
         _attr(wsc.ATTR_NETWORK_KEY_INDEX, bytes([1]))
         + _attr(wsc.ATTR_SSID, ssid)
@@ -64,47 +57,10 @@ def _build_m2(
         + _attr(wsc.ATTR_NETWORK_KEY, network_key)
         + _attr(wsc.ATTR_MAC_ADDRESS, b"\x02\x00\x00\x00\x00\x10")
     )
-    inner = _attr(0x100E, credential)  # Attribute 0x100E = Credential
-    kwa = hmac.new(keys.auth_key, inner, sha256).digest()[:8]
-    plaintext = inner + _attr(wsc.ATTR_KEY_WRAP_AUTH, kwa)
-
-    # PKCS#7 pad + AES-128-CBC encrypt with KeyWrapKey.
-    pad_len = 16 - (len(plaintext) % 16)
-    plaintext_padded = plaintext + bytes([pad_len]) * pad_len
-    iv = os.urandom(16)
-    cipher = Cipher(
-        algorithms.AES(keys.key_wrap_key), modes.CBC(iv), backend=default_backend()
-    )
-    enc = iv + cipher.encryptor().update(plaintext_padded)
-
-    # M2 attribute stream (sans Authenticator).
-    m2_core = (
-        _attr(wsc.ATTR_VERSION, bytes([0x10]))
-        + _attr(wsc.ATTR_MESSAGE_TYPE, bytes([wsc.WSC_MSG_M2]))
-        + _attr(wsc.ATTR_ENROLLEE_NONCE, session.enrollee_nonce)
-        + _attr(wsc.ATTR_REGISTRAR_NONCE, r_nonce)
-        + _attr(0x1048, os.urandom(16))  # UUID-R
-        + _attr(wsc.ATTR_PUBLIC_KEY, r_public_bytes)
-        + _attr(wsc.ATTR_AUTH_TYPE_FLAGS, struct.pack("!H", 0x0122))
-        + _attr(wsc.ATTR_ENCR_TYPE_FLAGS, struct.pack("!H", 0x0009))
-        + _attr(wsc.ATTR_CONN_TYPE_FLAGS, bytes([0x01]))
-        + _attr(wsc.ATTR_CONFIG_METHODS, struct.pack("!H", 0x2008))
-        + _attr(wsc.ATTR_MANUFACTURER, b"test")
-        + _attr(wsc.ATTR_MODEL_NAME, b"test")
-        + _attr(wsc.ATTR_MODEL_NUMBER, b"1")
-        + _attr(wsc.ATTR_SERIAL_NUMBER, b"1")
-        + _attr(wsc.ATTR_PRIMARY_DEVICE_TYPE, b"\x00\x06\x00\x50\xf2\x04\x00\x01")
-        + _attr(wsc.ATTR_DEVICE_NAME, b"test")
-        + _attr(wsc.ATTR_RF_BANDS, bytes([session.rf_band]))
-        + _attr(wsc.ATTR_ASSOCIATION_STATE, struct.pack("!H", 0))
-        + _attr(wsc.ATTR_CONFIG_ERROR, struct.pack("!H", 0))
-        + _attr(wsc.ATTR_DEVICE_PASSWORD_ID, struct.pack("!H", 4))
-        + _attr(wsc.ATTR_OS_VERSION, struct.pack("!I", 0x80000001))
-        + _attr(wsc.ATTR_ENCRYPTED_SETTINGS, enc)
-    )
-    auth = hmac.new(keys.auth_key, session.m1_bytes + m2_core, sha256).digest()[:8]
-    m2 = m2_core + _attr(wsc.ATTR_AUTHENTICATOR, auth)
-    return m2, keys, plaintext
+    nested_plaintext = _attr(0x100E, credential)
+    kwa = hmac.new(registrar.keys.auth_key, nested_plaintext, sha256).digest()[:8]
+    plaintext_with_kwa = nested_plaintext + _attr(wsc.ATTR_KEY_WRAP_AUTH, kwa)
+    return m2, registrar.keys, plaintext_with_kwa
 
 
 def test_m1_contains_mandatory_attributes() -> None:
