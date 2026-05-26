@@ -65,10 +65,11 @@ class MessageType(IntEnum):
     EM_BACKHAUL_STEERING_RESPONSE = 0x801A
 
     # ---- Wi-Fi EasyMesh R2 message types -----------------------------------
-    # Values verified against strict R3-compliant controllers ieee_1905_1::eMessageType. R2 and R3
-    # extensions are packed densely in the 0x801B-0x8031 range; the previous
-    # ordering had off-by-one shifts that put BackhaulSTA Capability Query
-    # at 0x8026 (actually Tunnelled) and Report at 0x8027 (actually Query).
+    # Values verified against the canonical Multi-AP message-type registry.
+    # R2 and R3 extensions are packed densely in the 0x801B-0x8031 range;
+    # the previous ordering had off-by-one shifts that put BackhaulSTA
+    # Capability Query at 0x8026 (actually Tunnelled) and Report at
+    # 0x8027 (actually Query).
     EM_CHANNEL_SCAN_REQUEST = 0x801B
     EM_CHANNEL_SCAN_REPORT = 0x801C
     EM_CAC_REQUEST = 0x8020

@@ -3,8 +3,8 @@
 
 The emulator implements the agent-side of every CMDU exchange a
 Multi-AP R3 controller drives during onboarding and routine operation,
-so it can pass strict controller validators (e.g. strict derived
-stacks) without spamming retries.
+so it can pass strict R3-compliant controller validators without
+spamming retries.
 
 Periodic emissions (driven by ``_heartbeat_loop``)
 
@@ -71,6 +71,7 @@ from ieee1905.core.tlvs import (
     BackhaulStaRadioCapabilities,
     CacCapabilities,
     CacRadioCapability,
+    CacStatusReport,
     ChannelPreference,
     ChannelPreferenceOpClass,
     ChannelScanCapabilities,
@@ -79,7 +80,6 @@ from ieee1905.core.tlvs import (
     ChannelSelectionResponse,
     ClientCapabilityReport,
     DeviceInformation,
-    LinkMetricResultCode,
     LocalInterface,
     MacAddress,
     MetricCollectionInterval,
@@ -91,9 +91,13 @@ from ieee1905.core.tlvs import (
     OperationalBssRadio,
     Profile2ApCapability,
     RadioMetrics,
+    ReceiverLinkEntry,
+    ReceiverLinkMetric,
     SearchedRole,
     SearchedService,
     SupportedService,
+    TransmitterLinkEntry,
+    TransmitterLinkMetric,
     WscFrame,
 )
 from ieee1905.emulator._common import (
@@ -203,7 +207,13 @@ class FakeAgent:
             if now >= next_topology:
                 self._send_topology_discovery()
                 next_topology = now + self.topology_interval_s
-            if now >= next_autoconfig:
+            # Autoconfig Search hunts for a Multi-AP Controller. Once WSC
+            # onboarding has produced a BSS credential, we already have
+            # one — further Search emissions cause the controller to
+            # treat us as a flapping agent and re-run M1/M2 forever.
+            # An Autoconfig Renew (handled in _on_cmdu) is the only
+            # spec-sanctioned way to restart this side of the handshake.
+            if not self._onboarded and now >= next_autoconfig:
                 self._send_autoconfig_search()
                 next_autoconfig = now + self.autoconfig_interval_s
             if self._onboarded and now >= next_metrics:
@@ -214,13 +224,18 @@ class FakeAgent:
     def _send_topology_discovery(self) -> None:
         assert self._ctx is not None
         # IEEE 1905.1 §6.3.1: Topology Discovery carries AL MAC + the MAC
-        # of the interface the frame is leaving. Both TLVs are mandatory.
+        # of the interface the frame is *leaving on* (must match the
+        # Ethernet header source MAC). We have a single interface and
+        # send_frame() uses al_mac as the Ethernet source, so the
+        # interface-MAC TLV must echo the AL MAC — otherwise a strict
+        # controller treats it as a *separate* 1905 neighbor and starts
+        # building a phantom ALE entry for it.
         cmdu_bytes = build_cmdu(
             message_type=MessageType.TOPOLOGY_DISCOVERY.value,
             message_id=self._ctx.next_mid(),
             typed_tlvs=[
                 AlMacAddress(al_mac=self.al_mac),
-                MacAddress(mac=self.radio_id),
+                MacAddress(mac=self.al_mac),
             ],
         )
         try:
@@ -294,6 +309,28 @@ class FakeAgent:
             # the emulator owns no real radio and no clients.
             self._send_ack(src, mid)
 
+    def _operational_bsses(self) -> list[OperationalBss]:
+        """Return the per-radio operational BSS list for Topology Response.
+
+        Post-onboarding this reflects the BSS(es) the controller provisioned
+        in M2 — using the SSID and BSSID (the WPS Credential's MAC Address
+        attribute per WPS v2.0 §11). If a controller never sees those
+        provisioned values echo back in Topology Response, it concludes
+        "BSS not yet configured" and schedules a fresh AP-Autoconfig Renew,
+        which manifests as a permanent onboarding loop. Pre-onboarding,
+        fall back to the CLI-supplied defaults so the report is always
+        well-formed.
+        """
+        if self._bss_credentials:
+            return [
+                OperationalBss(
+                    bssid=(cred.mac_address if cred.mac_address else self.bssid),
+                    ssid=(cred.ssid if cred.ssid else self.ssid),
+                )
+                for cred in self._bss_credentials
+            ]
+        return [OperationalBss(bssid=self.bssid, ssid=self.ssid)]
+
     def _reply_topology_response(self, dst: bytes, query: CMDU) -> None:
         assert self._ctx is not None
         # IEEE 1905.1 §6.4.4: 802.11 media types (0x0100-0x0107) require a
@@ -312,14 +349,20 @@ class FakeAgent:
             typed_tlvs=[
                 DeviceInformation(
                     al_mac=self.al_mac,
-                    interfaces=[LocalInterface(mac=self.radio_id, media_type=0x0001)],
+                    # LocalInterface.mac is the *physical* interface MAC of
+                    # the entry, not the radio identifier. The emulator
+                    # has one interface and its Ethernet source MAC is
+                    # the AL MAC, so this must echo al_mac — using
+                    # radio_id here makes a strict controller register
+                    # the radio as a phantom 1905 ALE.
+                    interfaces=[LocalInterface(mac=self.al_mac, media_type=0x0001)],
                 ),
                 SupportedService(services=[0x01]),  # Multi-AP Agent
                 ApOperationalBss(
                     radios=[
                         OperationalBssRadio(
                             radio_id=self.radio_id,
-                            bsses=[OperationalBss(bssid=self.bssid, ssid=self.ssid)],
+                            bsses=self._operational_bsses(),
                         )
                     ]
                 ),
@@ -398,27 +441,34 @@ class FakeAgent:
         """Build the metric TLV list common to solicited and unsolicited reports.
 
         Multi-AP v2.0 §17.1.14: at minimum one ``ApMetrics`` per BSS.
-        We also include ``RadioMetrics`` (R2 §17.2.60) because most
-        controllers reject reports that lack per-radio utilization.
+        Post-onboarding the report must use the BSSID(s) the controller
+        provisioned in M2; otherwise the controller's per-radio BSS
+        accounting cannot match the metric to a BSS and logs
+        "bss metrics missing for ale[...] radio[...]". RadioMetrics
+        (R2 §17.2.60) is included because most controllers reject
+        reports that lack per-radio utilization.
         """
-        return [
-            ApMetrics(
-                bssid=self.bssid,
-                channel_utilization=20,
-                num_associated_stas=0,
-                esp_info=b"\x80\x00\x10\x20",
-            ),
+        bsses = self._operational_bsses()
+        tlvs: list[object] = []
+        for bss in bsses:
+            tlvs.append(
+                ApMetrics(
+                    bssid=bss.bssid,
+                    channel_utilization=20,
+                    num_associated_stas=0,
+                    esp_info=b"\x80\x00\x10\x20",
+                )
+            )
+        tlvs.append(
             RadioMetrics(
                 radio_id=self.radio_id,
-                # All values dBm/percentage. Noise floor -75 dBm encoded
-                # as 220 - 75 = 145 + 35? Actually per spec, noise is u8
-                # in dBm units offset by 220 (so 200 == -20 dBm worst).
-                noise=180,
+                noise=180,  # spec: u8, dBm offset by 220 (so 200 == -20 dBm worst)
                 transmit_utilization=15,
                 receive_utilization=10,
                 receive_other_utilization=5,
-            ),
-        ]
+            )
+        )
+        return tlvs
 
     def _reply_ap_metrics_response(self, dst: bytes, query: CMDU) -> None:
         assert self._ctx is not None
@@ -460,7 +510,15 @@ class FakeAgent:
     def _send_wsc_m1(self, dst: bytes) -> None:
         assert self._ctx is not None
         rf_band = _FREQ_BAND_TO_RF_BAND.get(self.freq_band, RF_BAND_2G)
-        session = WscEnrolleeSession(enrollee_mac=self.radio_id, rf_band=rf_band)
+        # WPS v2.0 §7.4 "Enrollee MAC Address" accepts BSSID, radio MAC,
+        # or a unique device identifier. Strict Multi-AP controllers
+        # treat the value they read here as the
+        # enrollee's ALE MAC and create a fresh APDevice entry for it
+        # if it differs from the AL MAC they already know from
+        # Topology Discovery. Using the AL MAC here keeps the
+        # controller's data model coherent — no phantom ALE entry
+        # populated with our M1 Manufacturer/AuthFlags fields.
+        session = WscEnrolleeSession(enrollee_mac=self.al_mac, rf_band=rf_band)
         m1_payload = session.build_m1()
         self._wsc_session = session
         # Multi-AP v2.0 §17.1.7: M1 envelope carries Radio Basic Capabilities,
@@ -544,14 +602,20 @@ class FakeAgent:
             logger.warning("WSC M2 Encrypted Settings rejected: %s", exc)
             return False
 
+        logger.debug(
+            "WSC M2 decrypted inner (%d bytes): %s",
+            len(inner),
+            inner.hex(),
+        )
+
         new_creds = parse_credentials(inner)
         if not new_creds:
             # Surface the inner attribute layout so the user can see what
             # the controller actually sent (and we can fix the parser).
-            seen = sorted({aid for aid, _ in parse_attributes(inner)})
+            seen = [(aid, len(val)) for aid, val in parse_attributes(inner)]
             logger.warning(
                 "WSC M2 contained no BSS credentials — inner attrs: %s",
-                ", ".join(f"0x{a:04x}" for a in seen),
+                ", ".join(f"0x{aid:04x}(len={ln})" for aid, ln in seen),
             )
             return False
 
@@ -584,16 +648,51 @@ class FakeAgent:
         """Respond to LINK_METRIC_QUERY.
 
         IEEE 1905.1 §6.3.6: the responder includes one Transmitter and
-        one Receiver link metric TLV per neighbor it has. We have no
-        peers from the agent's own discovery table, so emit a single
-        ``LinkMetricResultCode`` with the "invalid neighbor" code — the
-        spec-sanctioned way to say "I have no link metrics to report."
+        one Receiver link metric TLV per neighbor it has. The Multi-AP
+        controller is our only 1905 neighbor — its AL MAC is the source
+        of the query — so the response covers exactly that link with
+        synthetic-but-plausible Gigabit-Ethernet metrics. Returning only
+        a "no neighbors" result code leaves strict R3-compliant
+        controllers unable to associate per-link telemetry with our
+        agent's BSS.
         """
         assert self._ctx is not None
         cmdu_bytes = build_cmdu(
             message_type=MessageType.LINK_METRIC_RESPONSE.value,
             message_id=query.header.message_id,
-            typed_tlvs=[LinkMetricResultCode(result_code=0x00)],
+            typed_tlvs=[
+                TransmitterLinkMetric(
+                    responder_al_mac=self.al_mac,
+                    neighbor_al_mac=dst,
+                    links=[
+                        TransmitterLinkEntry(
+                            local_interface_mac=self.al_mac,
+                            neighbor_interface_mac=dst,
+                            intf_type=0x0001,  # 1000BASE-T
+                            has_bridge=False,
+                            packet_errors=0,
+                            transmitted_packets=100,
+                            mac_throughput_mbps=1000,
+                            link_availability_pct_x100=10000,  # 100.00%
+                            phy_rate_mbps=1000,
+                        ),
+                    ],
+                ),
+                ReceiverLinkMetric(
+                    responder_al_mac=self.al_mac,
+                    neighbor_al_mac=dst,
+                    links=[
+                        ReceiverLinkEntry(
+                            local_interface_mac=self.al_mac,
+                            neighbor_interface_mac=dst,
+                            intf_type=0x0001,
+                            packet_errors=0,
+                            packets_received=100,
+                            rssi_db=0,  # not wireless
+                        ),
+                    ],
+                ),
+            ],
         )
         send_frame(self._ctx, cmdu_bytes, dst=dst)
 
@@ -639,7 +738,10 @@ class FakeAgent:
         Multi-AP v1.0 §17.1.10: at minimum a per-radio Channel Preference
         TLV is required. An empty operating-class list means "no channel
         is non-operable for me", which lets the controller pick any
-        spec-default channel.
+        spec-default channel. R2 §17.2.41 adds CAC Status Report TLV as
+        mandatory — strict controllers reject the report without it. An
+        empty CacStatusReport (all three counts zero) is the spec-
+        sanctioned way to say "no DFS activity" for a non-DFS radio.
         """
         assert self._ctx is not None
         cmdu_bytes = build_cmdu(
@@ -655,6 +757,7 @@ class FakeAgent:
                         ChannelPreferenceOpClass(op_class=81, channels=[], preference=0xF0),
                     ],
                 ),
+                CacStatusReport(),  # empty: no DFS activity
             ],
         )
         send_frame(self._ctx, cmdu_bytes, dst=dst)

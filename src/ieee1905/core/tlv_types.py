@@ -89,7 +89,7 @@ class TLVType(IntEnum):
     # ---- Wi-Fi EasyMesh R2 (Multi-AP Specification v2.0) -------------------
     # Spec: Multi-AP Specification v2.0 §17.2.x.
 
-    # Values verified against strict R3-compliant controllers framework/tlvf wfa_map/eTlvTypeMap.h.
+    # Values verified against the canonical Multi-AP TLV type registry.
     # Earlier revisions of this enum had a few wrong addresses (notably
     # 0xAE / 0xB0 / 0xD4-0xDF); they have all been corrected below.
 
@@ -99,6 +99,7 @@ class TLVType(IntEnum):
     EM_CHANNEL_SCAN_RESULT = 0xA7
     EM_TIMESTAMP = 0xA8
     EM_1905_LAYER_SECURITY_CAPABILITY = 0xA9
+    EM_CAC_STATUS_REPORT = 0xB1
     EM_CAC_CAPABILITIES = 0xB2
     EM_MULTI_AP_PROFILE = 0xB3
     EM_PROFILE_2_AP_CAPABILITY = 0xB4
@@ -144,7 +145,7 @@ class TLVType(IntEnum):
     # ---- Wi-Fi EasyMesh R4 (Multi-AP Specification v4.0) -------------------
     # Spec: Multi-AP Specification v4.0 §17.2.x. Wi-Fi 7 / EHT / MLD additions.
 
-    EM_AP_WIFI6_CAPABILITIES = 0xAA  # per strict R3-compliant controllers TLV_AP_WIFI_6_CAPABILITIES
+    EM_AP_WIFI6_CAPABILITIES = 0xAA  # AP Wi-Fi 6 capabilities (Multi-AP v4.0)
     EM_AP_EHT_OPERATIONS = 0xE0
     EM_AP_WIFI7_AGENT_CAPABILITIES = 0xE1
     EM_AGENT_AP_MLD_CONFIGURATION = 0xE2

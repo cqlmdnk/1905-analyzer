@@ -193,13 +193,18 @@ def _drive_agent_with(query_hex: str) -> list[CMDU]:
     return [_extract_cmdu_from_send(f) for f in captured]
 
 
-def test_agent_replies_link_metric_query_with_result_code() -> None:
+def test_agent_replies_link_metric_query_with_tx_rx_metrics() -> None:
     # type=0x0005 LINK_METRIC_QUERY, mid=0x0101, flags=0x80 (last, no relay)
     out = _drive_agent_with("0000000501010080")
     assert len(out) == 1
     assert out[0].header.message_type == MessageType.LINK_METRIC_RESPONSE.value
     types = {t.tlv_type for t in out[0].tlvs}
-    assert 0x0C in types  # LinkMetricResultCode
+    # Strict 1905.1 §6.3.6: respond with TransmitterLinkMetric (0x09) and
+    # ReceiverLinkMetric (0x0A) TLVs for our one 1905 neighbor (the
+    # controller). A bare LinkMetricResultCode (0x0C) makes strict
+    # derived controllers log "orphan BSS node".
+    assert 0x09 in types
+    assert 0x0A in types
 
 
 def test_agent_acks_higher_layer_data() -> None:
@@ -219,7 +224,7 @@ def test_agent_acks_multi_ap_policy_config_request() -> None:
 
 
 def test_agent_replies_backhaul_sta_capability_query() -> None:
-    # type=0x8027 EM_BACKHAUL_STA_CAPABILITY_QUERY (canonical strict R3-compliant controllers value)
+    # type=0x8027 EM_BACKHAUL_STA_CAPABILITY_QUERY (canonical Multi-AP value)
     out = _drive_agent_with("0000802701040080")
     assert len(out) == 1
     assert out[0].header.message_type == MessageType.EM_BACKHAUL_STA_CAPABILITY_REPORT.value

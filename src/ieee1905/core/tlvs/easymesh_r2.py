@@ -662,6 +662,147 @@ class CacCapabilities:
 register_typed(CacCapabilities, spec_ref="Multi-AP v2.0 §17.2.46")
 
 
+# ---------------------------------------------------------------------------
+# 0xB1 CAC Status Report — Multi-AP v2.0 §17.2.41
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class CacAvailableChannel:
+    """A channel where CAC has completed and the radio may transmit."""
+
+    op_class: int
+    channel: int
+    #: Minutes since CAC last completed on this op-class/channel.
+    minutes_since_cac_completion: int
+
+
+@dataclass(slots=True)
+class CacNonOccupancyChannel:
+    """A channel currently in the non-occupancy period after radar detection."""
+
+    op_class: int
+    channel: int
+    #: Seconds remaining before the non-occupancy timer expires.
+    seconds_remaining: int
+
+
+@dataclass(slots=True)
+class CacOngoingChannel:
+    """A channel where a CAC sweep is currently in progress."""
+
+    op_class: int
+    channel: int
+    #: Seconds remaining before the CAC sweep completes.
+    seconds_remaining: int
+
+
+@dataclass(slots=True)
+class CacStatusReport:
+    """CAC Status Report (Multi-AP v2.0 §17.2.41).
+
+    Mandatory in CHANNEL_PREFERENCE_REPORT for R2+ agents. An empty
+    report (all three counts zero, 3-byte payload) is the spec-sanctioned
+    way to say "no DFS activity to report" for an agent without DFS
+    radios.
+    """
+
+    TLV_TYPE: ClassVar[int] = 0xB1
+    TLV_NAME: ClassVar[str] = "CAC status report"
+
+    available: list[CacAvailableChannel] = field(default_factory=list)
+    non_occupancy: list[CacNonOccupancyChannel] = field(default_factory=list)
+    ongoing: list[CacOngoingChannel] = field(default_factory=list)
+
+    def to_payload(self) -> bytes:
+        out = bytearray([len(self.available) & 0xFF])
+        for entry in self.available:
+            out += struct.pack(
+                ">BBH",
+                entry.op_class & 0xFF,
+                entry.channel & 0xFF,
+                entry.minutes_since_cac_completion & 0xFFFF,
+            )
+        out.append(len(self.non_occupancy) & 0xFF)
+        for entry in self.non_occupancy:
+            out += struct.pack(
+                ">BBH",
+                entry.op_class & 0xFF,
+                entry.channel & 0xFF,
+                entry.seconds_remaining & 0xFFFF,
+            )
+        out.append(len(self.ongoing) & 0xFF)
+        for entry in self.ongoing:
+            out += struct.pack(
+                ">BBI",
+                entry.op_class & 0xFF,
+                entry.channel & 0xFF,
+                entry.seconds_remaining & 0xFFFFFFFF,
+            )
+        return bytes(out)
+
+    @classmethod
+    def from_payload(cls, payload: bytes) -> CacStatusReport:
+        offset = 0
+
+        def _need(n: int) -> None:
+            if offset + n > len(payload):
+                raise ValueError("CAC status report truncated")
+
+        _need(1)
+        count_avail = payload[offset]
+        offset += 1
+        available: list[CacAvailableChannel] = []
+        for _ in range(count_avail):
+            _need(4)
+            op_class, channel, minutes = struct.unpack_from(">BBH", payload, offset)
+            available.append(
+                CacAvailableChannel(
+                    op_class=op_class,
+                    channel=channel,
+                    minutes_since_cac_completion=minutes,
+                )
+            )
+            offset += 4
+
+        _need(1)
+        count_nocc = payload[offset]
+        offset += 1
+        non_occupancy: list[CacNonOccupancyChannel] = []
+        for _ in range(count_nocc):
+            _need(4)
+            op_class, channel, seconds = struct.unpack_from(">BBH", payload, offset)
+            non_occupancy.append(
+                CacNonOccupancyChannel(
+                    op_class=op_class, channel=channel, seconds_remaining=seconds
+                )
+            )
+            offset += 4
+
+        _need(1)
+        count_ongoing = payload[offset]
+        offset += 1
+        ongoing: list[CacOngoingChannel] = []
+        for _ in range(count_ongoing):
+            _need(6)
+            op_class, channel, seconds = struct.unpack_from(">BBI", payload, offset)
+            ongoing.append(
+                CacOngoingChannel(
+                    op_class=op_class, channel=channel, seconds_remaining=seconds
+                )
+            )
+            offset += 6
+
+        if offset != len(payload):
+            raise ValueError(
+                f"CAC status report has {len(payload) - offset} trailing bytes"
+            )
+        return cls(available=available, non_occupancy=non_occupancy, ongoing=ongoing)
+
+
+register_typed(CacStatusReport, spec_ref="Multi-AP v2.0 §17.2.41")
+
+
 @dataclass(slots=True)
 class Profile2ApCapability:
     TLV_TYPE: ClassVar[int] = 0xB4

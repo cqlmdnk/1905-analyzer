@@ -72,6 +72,13 @@ ATTR_NETWORK_KEY = 0x1027
 ATTR_NETWORK_KEY_INDEX = 0x1028
 ATTR_AUTH_TYPE = 0x1003
 ATTR_ENCR_TYPE = 0x100F
+ATTR_VENDOR_EXTENSION = 0x1049
+
+# Wi-Fi Alliance OUI (used as the vendor ID for the WSC v2.0 marker
+# carried inside a Vendor Extension attribute — WPS v2.0 §12).
+WFA_OUI = bytes.fromhex("00372a")
+WFA_SUBELEMENT_VERSION2 = 0x00
+WFA_VERSION2_VALUE = 0x20  # WSC v2.0
 
 WSC_MSG_M1 = 0x04
 WSC_MSG_M2 = 0x05
@@ -152,6 +159,15 @@ class WscEnrolleeSession:
         # subcategory 0x0001 = Access Point.
         pdt = bytes.fromhex("0006") + bytes.fromhex("0050f204") + bytes.fromhex("0001")
 
+        # WPS v2.0 §12: Vendor Extension wrapping the Wi-Fi Alliance OUI
+        # plus a single sub-element advertising WSC v2.0. Without this
+        # marker some registrars fall back to WSC v1.0 framing and the
+        # M2 it returns isn't shaped the way a v2.0 enrollee expects.
+        wfa_vendor_ext = (
+            WFA_OUI
+            + bytes([WFA_SUBELEMENT_VERSION2, 0x01, WFA_VERSION2_VALUE])
+        )
+
         attrs = (
             _attr(ATTR_VERSION, bytes([0x10]))
             + _attr(ATTR_MESSAGE_TYPE, bytes([WSC_MSG_M1]))
@@ -159,12 +175,15 @@ class WscEnrolleeSession:
             + _attr(ATTR_MAC_ADDRESS, self.enrollee_mac)
             + _attr(ATTR_ENROLLEE_NONCE, self.enrollee_nonce)
             + _attr(ATTR_PUBLIC_KEY, self.public_key)
-            # WPA-PSK (0x0002) | WPA2-PSK (0x0020) | SAE (0x0100).
-            + _attr(ATTR_AUTH_TYPE_FLAGS, struct.pack("!H", 0x0122))
-            # NONE (0x0001) | AES (0x0008).
-            + _attr(ATTR_ENCR_TYPE_FLAGS, struct.pack("!H", 0x0009))
+            # Open | WPA-PSK | WPA2-Enterprise | WPA2-PSK | SAE.
+            + _attr(ATTR_AUTH_TYPE_FLAGS, struct.pack("!H", 0x0133))
+            # None | TKIP | AES.
+            + _attr(ATTR_ENCR_TYPE_FLAGS, struct.pack("!H", 0x000D))
             + _attr(ATTR_CONN_TYPE_FLAGS, bytes([0x01]))  # ESS
-            + _attr(ATTR_CONFIG_METHODS, struct.pack("!H", 0x2008))  # PBC + virtual PBC
+            # PushButton (0x0080) | Physical PB (0x0040) | Virtual PB
+            # (0x0280 contains the v2-PBC discrimination bits used by
+            # the WFA conformance test suite).
+            + _attr(ATTR_CONFIG_METHODS, struct.pack("!H", 0x06C0))
             + _attr(ATTR_WPS_STATE, bytes([0x01]))  # Not configured
             + _attr(ATTR_MANUFACTURER, self.manufacturer)
             + _attr(ATTR_MODEL_NAME, self.model_name)
@@ -177,6 +196,7 @@ class WscEnrolleeSession:
             + _attr(ATTR_DEVICE_PASSWORD_ID, struct.pack("!H", 0x0004))  # PushButton
             + _attr(ATTR_CONFIG_ERROR, struct.pack("!H", 0x0000))
             + _attr(ATTR_OS_VERSION, struct.pack("!I", 0x80000001))
+            + _attr(ATTR_VENDOR_EXTENSION, wfa_vendor_ext)
         )
         self.m1_bytes = attrs
         return attrs
